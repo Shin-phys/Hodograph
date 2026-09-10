@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>運動ベクトル可視化</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>運動ベクトル可視化アプリ</h1>
+  <div class="phase">動画から速度・加速度ベクトルを作図する</div>
+</header>
+
+<!-- ============ 画面1：読み込み ============ -->
+<!-- ============ 画面0：運動のタイル ============ -->
+<section id="screen0">
+  <div class="card">
+    <h2>どの運動を測りますか</h2>
+    <div id="tiles" class="tiles"></div>
+    <div class="sub spaced">手書き／自動は次の画面で切り替えます。</div>
+  </div>
+</section>
+
+<section id="screen1" class="hide">
+  <div class="card" id="presetCard">
+    <div id="presetNote"></div>
+    <button id="backToTiles" class="ghost spaced-sm">運動を選び直す</button>
+  </div>
+
+  <div class="card" id="predCard">
+    <h2>予測</h2>
+    <label class="chk"><input type="checkbox" id="usePrediction" checked> 予測ステップを使う（教師が切り替えます）</label>
+    <div id="predBody" class="spaced">
+      <div id="predQuestions"></div>
+      <button id="predSave" class="primary spaced">予測を記録する</button>
+    </div>
+    <div id="predAnswerBig" class="hide"></div>
+    <button id="predRedo" class="ghost spaced-sm">予測を選び直す</button>
+  </div>
+
+  <div class="card" id="ideaCard">
+    <h2>測ってみたいことリスト</h2>
+    <ul class="ideas" id="ideaList"></ul>
+    <div class="sub">「自由にどうぞ」より「これ測れる？」の方が手が動きます。</div>
+  </div>
+
+  <div class="card">
+    <div id="drop">
+      <div class="drop-title">運動を撮影した動画を読み込む</div>
+      <button class="primary" id="pick">動画を選ぶ</button>
+      <input type="file" id="file" accept="video/*">
+      <div class="sub drop-note">ここにドラッグ＆ドロップもできます／動画は端末の外に出ません</div>
+    </div>
+    <div class="row tight spaced hide" id="sampleRow">
+      <button id="sampleBtn" class="grow">お手本を試す</button>
+    </div>
+    <div id="loadState" class="sub load-state"></div>
+    <div class="bar hide" id="scanBar"><i></i></div>
+  </div>
+
+  <div class="card" id="guideOne">
+    <h2>撮影で守ること</h2>
+    <div class="lead">カメラを固定して、運動面と平行に撮る。</div>
+    <div class="sub spaced-sm">守るルールは一つだけです。</div>
+  </div>
+
+  <div class="card" id="guideFull">
+    <h2>撮影ガイド</h2>
+    <div class="lead">必ず守ること</div>
+    <ul class="guide">
+      <li>カメラを固定する（スタンド・三脚）</li>
+      <li>運動が起きる面と、カメラの撮像面を平行にする</li>
+      <li>少し離れてズームで撮る（近くから広角だと遠近で矢印が歪む）</li>
+      <li><b>AE/AF をロックする</b>（iPhone は長押し）。露出が動くとストロボ画像が破綻する</li>
+      <li><b>運動面と背景の間に距離を取る</b>（影が背景に落ちにくくなる）</li>
+    </ul>
+    <details>
+      <summary>できれば</summary>
+      <ul>
+        <li>スローモーション（120fps 以上）で撮る。30fps だと室内では尾を引いて中心が定まらない</li>
+        <li>明るい場所で撮る／ズームは録画前に決め、録画中は触らない</li>
+        <li>動かない場所にも同じシールを1枚貼る（カメラぶれ補正用）</li>
+      </ul>
+    </details>
+  </div>
+</section>
+
+<!-- ============ 画面2：コマ送りと打点 ============ -->
+<section id="screen2" class="hide">
+
+  <div class="card pred-strip hide" id="predStrip"></div>
+
+  <div class="card">
+    <div id="stage">
+      <video id="vid" playsinline muted class="hide"></video>
+      <canvas id="cv"></canvas>
+      <canvas id="loupe" width="260" height="260"></canvas>
+      <div id="hint">画面をタップで打点／長押しでルーペ</div>
+    </div>
+    <canvas id="tl"></canvas>
+    <div class="row between labels">
+      <span class="mono" id="frameLabel">コマ 0 / 0</span>
+      <span class="mono sub" id="timeLabel">t = 0.000 s</span>
+    </div>
+  </div>
+
+  <div class="card card-tool">
+    <h2>コマ送り</h2>
+    <div class="row tight">
+      <button id="prev10">≪ −10</button>
+      <button id="prev" class="grow">◀ 前</button>
+      <button id="next" class="grow">次 ▶</button>
+      <button id="next10">+10 ≫</button>
+    </div>
+  </div>
+
+  <div class="card card-tool">
+    <h2>トリム（解析に使う区間）</h2>
+    <div class="row tight">
+      <button id="setIn" class="grow">ここをイン点に</button>
+      <button id="setOut" class="grow">ここをアウト点に</button>
+      <button id="resetTrim" class="ghost">全体</button>
+    </div>
+    <div class="sub mono spaced" id="trimLabel"></div>
+    <div class="sub">余計な前後（手で押している区間、バウンド後など）を先に切り落とします。追跡・背景推定より前に確定させる設計です。</div>
+  </div>
+
+  <div class="card card-tool" id="trackCard">
+    <h2>自動追跡</h2>
+    <div class="row tight">
+      <button id="pickColor" class="grow">追う色を指定</button>
+      <button id="pickMarker" class="grow">固定マーカーを指定</button>
+    </div>
+    <div class="row spaced">
+      <span class="sub">追う色</span>
+      <span id="colorChip" class="chip"></span>
+      <span class="sub mono" id="colorLabel"></span>
+    </div>
+
+    <div class="slider spaced">
+      <label>色相の幅 <span class="mono" id="hueTolVal">25°</span></label>
+      <input type="range" id="hueTol" min="5" max="60" value="25">
+    </div>
+    <div class="slider">
+      <label>彩度の下限 <span class="mono" id="satMinVal">0.35</span></label>
+      <input type="range" id="satMin" min="5" max="90" value="35">
+    </div>
+
+    <div class="row tight spaced">
+      <button id="runTrack" class="primary grow">自動追跡を実行</button>
+      <button id="clearTrack" class="ghost">結果を消す</button>
+    </div>
+    <div class="bar hide spaced-sm" id="trackBar"><i></i></div>
+
+    <div class="row spaced">
+      <label class="chk"><input type="checkbox" id="useMarker" checked> カメラぶれ補正を使う（固定マーカーの変位を差し引く）</label>
+    </div>
+    <div class="sub spaced" id="trackResult">シールをタップして色を指定してから実行してください。追跡できなかったコマは手動で打てます。</div>
+    <button id="gotoLost" class="ghost hide spaced">見失ったコマへ</button>
+  </div>
+
+  <div class="card card-tool" id="pointCard">
+    <h2>打点</h2>
+    <div class="row tight">
+      <button id="delCur" class="grow">このコマの点を消す</button>
+      <button id="undo" class="grow">直前を取り消す</button>
+      <button id="clearAll" class="ghost">全消去</button>
+    </div>
+    <div class="row spaced">
+      <label class="chk"><input type="checkbox" id="autoAdv" checked> 打点したら
+        <input type="number" id="advStep" value="3" min="1" max="60"> コマ進む</label>
+    </div>
+    <div class="row tight spaced-sm">
+      <label class="chk"><input type="checkbox" id="showAll" checked> 打点をすべて表示</label>
+      <label class="chk"><input type="checkbox" id="showNum" checked> 番号を表示</label>
+    </div>
+    <div class="sub mono spaced" id="ptLabel"></div>
+  </div>
+
+  <div class="card card-tool">
+    <h2>使うコマ（等間隔）</h2>
+    <div class="slider">
+      <label>開始コマ <span class="mono" id="selStartVal">0</span></label>
+      <input type="range" id="selStart" min="0" max="100" value="0">
+    </div>
+    <div class="slider">
+      <label>間隔 <span class="mono" id="selIntervalVal">1 コマ</span></label>
+      <input type="range" id="selInterval" min="1" max="30" value="1">
+    </div>
+    <div class="slider">
+      <label>個数 <span class="mono" id="selCountVal">10 点</span></label>
+      <input type="range" id="selCount" min="3" max="20" value="10">
+    </div>
+    <div class="row tight">
+      <button id="useSuggest" class="grow">推奨の間隔にする</button>
+    </div>
+    <div class="sub spaced" id="selSuggest"></div>
+    <div class="sub mono spaced-sm" id="selInfo"></div>
+    <div class="sub spaced">
+      間隔を動かすと、加速度ベクトル（橙）のプレビューがその場で更新されます。
+      狭いとジッタで矢印が暴れ、広いと曲率のバイアスが乗ります。
+    </div>
+  </div>
+
+  <div class="card card-tool">
+    <h2>ストロボ画像</h2>
+    <div class="row tight">
+      <select id="strobeMethod" class="grow">
+        <option value="diff">中央値背景＋全画面差分（既定）</option>
+        <option value="cutout">マーカー切り抜き貼り付け（退避先）</option>
+        <option value="lighten">比較明合成（暗幕向き）</option>
+      </select>
+    </div>
+    <div class="row tight spaced">
+      <button id="makeStrobe" class="primary grow">ストロボ画像を作る</button>
+    </div>
+    <div class="bar hide spaced-sm" id="strobeBar"><i></i></div>
+    <div class="sub spaced" id="strobeInfo">先に「使うコマ」を決めてから作ります。座標が無くても作れます。</div>
+
+    <div id="thresholdRow" class="slider spaced">
+      <label>閾値（物体が欠ける ← → ゴミが写る） <span class="mono" id="thresholdVal">1.00 倍</span></label>
+      <input type="range" id="thresholdScale" min="30" max="300" value="100">
+      <div class="sub mono" id="thresholdInfo"></div>
+    </div>
+    <div id="cutoutRow" class="slider hide">
+      <label>切り抜き半径 <span class="mono" id="cutoutVal">18 px</span></label>
+      <input type="range" id="cutoutRadius" min="6" max="60" value="18">
+    </div>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="fadeOld" checked> 古いコマを薄くする（振り子・円運動で必要）</label>
+    </div>
+    <div class="row tight spaced hide" id="strobeAfter">
+      <button id="toggleStrobe" class="grow">動画に戻る</button>
+      <button id="savePng">PNGで保存</button>
+    </div>
+    <div class="row tight spaced hide" id="toVectors">
+      <button id="goVectors" class="grow">このままベクトルも描いてみますか？</button>
+    </div>
+  </div>
+
+  <div class="card" id="drawCard">
+    <h2>作図</h2>
+    <div class="chips" id="stepChips"></div>
+    <div class="sub spaced" id="drawHint">ストロボ画像を作ってから「作図をはじめる」を押してください。</div>
+    <div class="row tight spaced" id="drawModeRow">
+      <select id="drawMode" class="grow">
+        <option value="hand">手書きモード（生徒が描く）</option>
+        <option value="auto">自動モード（提示・下見用）</option>
+      </select>
+    </div>
+    <button id="startDraw" class="primary spaced">作図をはじめる</button>
+    <div class="row tight spaced hide" id="drawActions">
+      <button id="fillRest" class="hide grow">残りを自動で描く</button>
+      <button id="nextStep" class="primary hide grow">次のステップへ</button>
+      <button id="collectBtn" class="primary hide grow">集める</button>
+      <button id="checkBtn" class="primary hide grow">答え合わせ</button>
+      <button id="backdrawBtn" class="primary hide grow">軌道に描き戻す</button>
+      <button id="autoNext" class="primary hide grow">次へ</button>
+      <button id="drawUndo" class="ghost hide">1本消す</button>
+      <button id="drawReset" class="ghost hide">最初から</button>
+      <button id="drawExit" class="ghost hide">作図をやめる</button>
+    </div>
+    <div id="hodoRow" class="hide spaced">
+      <select id="hodoMode">
+        <option value="all">全集合（加速度が一定の運動）</option>
+        <option value="pair">ペア送り（円運動・振り子）</option>
+        <option value="stair">階段（一次元運動）</option>
+      </select>
+      <div class="slider spaced-sm">
+        <label>別枠の拡大 <span class="mono" id="hodoZoomVal">×1.0</span></label>
+        <input type="range" id="hodoZoom" min="10" max="80" value="10">
+      </div>
+      <div class="slider hide spaced-sm" id="pairRow">
+        <label>組を送る <span class="mono" id="pairVal"></span></label>
+        <input type="range" id="pairSlider" min="0" max="8" value="0">
+      </div>
+    </div>
+    <div class="sub" id="checkResult"></div>
+  </div>
+
+  <div class="card card-tool">
+    <h2>診断</h2>
+    <table class="stat"><tbody id="stats"></tbody></table>
+    <div id="warnBox" class="spaced"></div>
+  </div>
+
+  <div class="card card-tool">
+    <h2>書き出し・確認</h2>
+    <div class="row tight">
+      <button id="csv" class="grow">座標をCSVで書き出す</button>
+      <button id="dump" class="ghost">コンソールに出力</button>
+    </div>
+    <div class="row tight spaced">
+      <button id="rot" class="ghost">画像を90°回す</button>
+      <button id="reload" class="ghost">別の動画を読む</button>
+    </div>
+    <div class="sub spaced">開発者コンソールで <span class="mono">state.frames</span> を確認できます（<span class="mono">window.state</span>）。</div>
+  </div>
+
+</section>
+</div>
+
+<!-- ===================================================================
+     読み込み順（依存の浅いものから）。build.py はこの順に連結する。
+     順序を変えるときは README.md の「モジュール構成」も直すこと。
+     =================================================================== -->
+<script src="js/core/state.js"></script>
+<script src="js/core/bus.js"></script>
+<script src="js/core/coords.js"></script>
+<script src="js/ui/dom.js"></script>
+<script src="js/presets/presets.js"></script>
+<script src="js/presets/samples.js"></script>
+<script src="js/core/points.js"></script>
+<script src="js/core/drawing.js"></script>
+<script src="js/core/wakelock.js"></script>
+<script src="js/analysis/color.js"></script>
+<script src="js/analysis/blob.js"></script>
+<script src="js/analysis/strobe.js"></script>
+<script src="js/video/frames.js"></script>
+<script src="js/video/scanner.js"></script>
+<script src="js/video/loader.js"></script>
+<script src="js/video/tracker.js"></script>
+<script src="js/ui/stage.js"></script>
+<script src="js/ui/arrows.js"></script>
+<script src="js/ui/overlay.js"></script>
+<script src="js/ui/timeline.js"></script>
+<script src="js/ui/loupe.js"></script>
+<script src="js/ui/pointer.js"></script>
+<script src="js/analysis/diagnostics.js"></script>
+<script src="js/io/exporter.js"></script>
+<script src="js/ui/controls.js"></script>
+<script src="js/ui/track-controls.js"></script>
+<script src="js/ui/selection.js"></script>
+<script src="js/ui/hodograph.js"></script>
+<script src="js/ui/draw-steps.js"></script>
+<script src="js/ui/prediction.js"></script>
+<script src="js/ui/tiles.js"></script>
+<script src="js/ui/strobe-controls.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
