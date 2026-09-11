@@ -134,7 +134,7 @@
        Δv を MIN_ARROWS 本は残せる範囲でしか広げない。 */
     const mMax = Math.max(1, Math.floor((f.length - 1) / (MIN_ARROWS + 1)));
     let firstOk1 = null, bestSoFar = null;
-    for (let m = 1; m <= Math.min(30, mMax); m++) {
+    for (let m = 1; m <= Math.min(120, mMax); m++) {
       const disp = [], acc = [];
       for (let i = 0; i + m < f.length; i++) {
         disp.push(Math.hypot(f[i + m].x - f[i].x, f[i + m].y - f[i].y));
@@ -242,6 +242,15 @@
     if (s.offset === undefined) s.offset = 0;
     s.offset = Math.max(0, Math.min(s.interval - 1, s.offset));
     s.startIndex = g.lo + s.offset;
+
+    /* 間隔スライダの上限は区間の長さから決める。
+       固定の 30 だと、iPhone のスロー撮影（240fps で 1000 コマ超）のときに
+       いちばん粗くしても点が密すぎた。逆に短い区間で 30 まで振れても意味が無い
+       （Δv が 5 本残らない）ので、区間 ÷ 6 を上限にする。 */
+    const span = g.hi - g.lo + 1;
+    const imax = Math.max(2, Math.min(120, Math.floor(span / 6)));
+    $('#selInterval').max = imax;
+    if (s.interval > imax) s.interval = imax;
 
     $('#selInterval').value = s.interval;
     const off = $('#selOffset');

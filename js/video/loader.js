@@ -14,17 +14,26 @@
   async function load(file, videoEl) {
     /* 同梱のお手本動画は URL 文字列で渡す。file:// でも <video src> なら開ける
        （fetch は file:// で弾かれるので使わないこと）。 */
-    videoEl.src = (typeof file === 'string') ? file : URL.createObjectURL(file);
     videoEl.playsInline = true;
     videoEl.muted = true;
-    videoEl.preload = 'auto';
+    /* 'auto' にすると読み込んだ時点で全部を抱え込もうとする。
+       iPhone のスロー撮影は数百 MB になることがあり、タブごと落ちる。
+       走査のときにどのみち通しで再生するので、ここでは metadata で足りる。 */
+    videoEl.preload = 'metadata';
+
+    /* ハンドラを先に付けてから src を入れる。逆にすると、
+       読み込みの速い素材（同梱のお手本動画）で loadedmetadata を
+       取りこぼし、タイムアウトまで固まることがある。 */
+    const ready = new Promise((res, rej) => {
+      videoEl.onloadedmetadata = res;
+      videoEl.onerror = () => rej(new Error('decode'));
+      /* 大きなファイルはメタデータが出るまで時間が掛かる */
+      setTimeout(() => rej(new Error('timeout')), 60000);
+    });
+    videoEl.src = (typeof file === 'string') ? file : URL.createObjectURL(file);
 
     try {
-      await new Promise((res, rej) => {
-        videoEl.onloadedmetadata = res;
-        videoEl.onerror = () => rej(new Error('decode'));
-        setTimeout(() => rej(new Error('timeout')), 20000);
-      });
+      await ready;
     } catch (e) {
       return { ok: false, reason: 'decode' };
     }
