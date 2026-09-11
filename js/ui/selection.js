@@ -66,19 +66,35 @@
   /**
    * 座標のばらつき（ジッタ）の目安。
    * 間隔1コマの二階差分は、なめらかな運動ならほぼノイズなので、
-   * その中央値をジッタの代わりに使う。
+   * その分布をジッタの代わりに使う。
+   *
+   * ★ 中央値だけでは足りない ★
+   * 実際の授業動画では、モーションブラーで重心が数コマだけ大きく飛ぶ。
+   * 中央値はその外れ値を無視するので「±9°」と出るのに、現場では
+   * 矢印が2本ほど逆を向く、ということが起きた（自由落下の実測）。
+   * 矢印の向きを壊すのは典型値ではなく**外れ値**なので、
+   * 上側の裾（90 パーセンタイル）も併せて持ち、推奨間隔はそちらで決める。
+   *   typ  … ふだんのばらつき。表示用
+   *   high … 荒れるコマのばらつき。推奨間隔を決めるのはこちら
    */
-  function jitter() {
+  function jitterStats() {
     const f = HG.points.listInTrim();
-    if (f.length < 3) return 0.3;
+    if (f.length < 3) return { typ: 0.3, high: 0.3 };
     const v = [];
     for (let i = 1; i < f.length - 1; i++) {
       v.push(Math.hypot(f[i + 1].x - 2 * f[i].x + f[i - 1].x,
                         f[i + 1].y - 2 * f[i].y + f[i - 1].y));
     }
     v.sort((a, b) => a - b);
-    return Math.max(0.2, v[Math.floor(v.length / 2)] / 2);
+    const q = r => v[Math.min(v.length - 1, Math.floor(r * v.length))] || 0;
+    const typ = Math.max(0.2, q(0.5) / 2);
+    /* high は「荒れるコマが Δv を何 px ずらすか」。
+       二階差分そのものが既に √6σ ≒ 2.4σ 相当なので、2.4 で割っておくと
+       angleUncertainty() の中で 2.4 を掛け直したときに実寸に戻る。 */
+    return { typ: typ, high: Math.max(typ, q(0.9) / 2.4) };
   }
+
+  function jitter() { return jitterStats().typ; }
 
   /**
    * Δv の向きの不確かさ（度）。
@@ -91,21 +107,34 @@
     return Math.atan2(2.4 * j, dvLen) * 180 / Math.PI;
   }
 
-  const TARGET_ANGLE = 12;   // これ以下に収まる最小の間隔を推奨する
+  const TARGET_ANGLE = 12;   // 典型値でこれ以下
+  const WORST_ANGLE  = 20;   // 荒れるコマでもこれ以下（矢印が逆を向かないための条件）
+  const MIN_ARROWS   = 5;    // Δv の本数の下限。これを割るほど広げてはいけない
 
   /**
-   * 推奨間隔。条件は2つあり、厳しいほうを採る。
-   *  (1) コマ間の変位がジッタの 10 倍以上     … 速度が読めるための条件
-   *  (2) Δv の向きの不確かさが 12°以下        … 加速度の向きが読めるための条件
+   * 推奨間隔。条件は3つあり、いちばん厳しいものを採る。
+   *  (1) コマ間の変位がジッタの 10 倍以上       … 速度が読めるための条件
+   *  (2) Δv の向きの不確かさが 12°以下          … 加速度の向きが読めるための条件
+   *  (3) 荒れるコマでも 20°以下                 … 矢印が逆を向かないための条件
+   *
+   * 間隔を n 倍に広げると Δv は n² 倍になるのに、ジッタは変わらない。
+   * つまり間隔を2倍にするだけで向きの精度は4倍良くなる。ここが効く。
    */
   function suggest() {
     const f = HG.points.listInTrim();
-    const j = jitter();
-    if (f.length < 4) return { interval: 1, ratio: 0, accRatio: 0, jitter: j, angle: 90 };
+    const st = jitterStats();
+    const j = st.typ, jh = st.high;
+    if (f.length < 4) {
+      return { interval: 1, ratio: 0, accRatio: 0, jitter: j, jitterHigh: jh,
+               angle: 90, angleWorst: 90 };
+    }
     const median = a => { a.sort((x, y) => x - y); return a[Math.floor(a.length / 2)] || 0; };
 
-    let firstOk1 = null;
-    for (let m = 1; m <= Math.min(30, Math.floor(f.length / 3)); m++) {
+    /* 広げれば広げるほど向きは正確になるが、矢印が2本では授業にならない。
+       Δv を MIN_ARROWS 本は残せる範囲でしか広げない。 */
+    const mMax = Math.max(1, Math.floor((f.length - 1) / (MIN_ARROWS + 1)));
+    let firstOk1 = null, bestSoFar = null;
+    for (let m = 1; m <= Math.min(30, mMax); m++) {
       const disp = [], acc = [];
       for (let i = 0; i + m < f.length; i++) {
         disp.push(Math.hypot(f[i + m].x - f[i].x, f[i + m].y - f[i].y));
@@ -117,21 +146,29 @@
       const dMed = median(disp), aMed = median(acc);
       const interval = (f[m].index - f[0].index) || m;
       const r = {
-        interval: interval, ratio: dMed / j, accRatio: aMed / j, jitter: j,
-        angle: angleUncertainty(aMed, j), accWeak: false
+        interval: interval, ratio: dMed / j, accRatio: aMed / j,
+        jitter: j, jitterHigh: jh,
+        angle: angleUncertainty(aMed, j),
+        angleWorst: angleUncertainty(aMed, jh),
+        accWeak: false
       };
       if (dMed >= 10 * j && !firstOk1) firstOk1 = r;
-      if (dMed >= 10 * j && r.angle <= TARGET_ANGLE) return r;
+      if (!bestSoFar || r.angleWorst < bestSoFar.angleWorst) bestSoFar = r;
+      if (dMed >= 10 * j && r.angle <= TARGET_ANGLE && r.angleWorst <= WORST_ANGLE) return r;
     }
-    if (firstOk1) { firstOk1.accWeak = true; return firstOk1; }
-    return { interval: 1, ratio: 0, accRatio: 0, jitter: j, angle: 90, accWeak: true };
+    /* どの間隔でも条件を満たさないときは、いちばんマシな間隔を返す。
+       1コマおきに落とすと、いちばん荒れる間隔を勧めることになってしまう。 */
+    const fb = bestSoFar || firstOk1;
+    if (fb) { fb.accWeak = true; return fb; }
+    return { interval: 1, ratio: 0, accRatio: 0, jitter: j, jitterHigh: jh,
+             angle: 90, angleWorst: 90, accWeak: true };
   }
 
   /** いま選んでいる間隔での Δv の大きさと角度不確かさ */
   function current() {
     const p = list().filter(f => f.found);
-    const j = jitter();
-    if (p.length < 3) return { dv: 0, angle: 90, jitter: j };
+    const st = jitterStats();
+    if (p.length < 3) return { dv: 0, angle: 90, angleWorst: 90, jitter: st.typ, jitterHigh: st.high };
     const a = [];
     for (let i = 1; i < p.length - 1; i++) {
       a.push(Math.hypot(p[i + 1].x - 2 * p[i].x + p[i - 1].x,
@@ -139,7 +176,11 @@
     }
     a.sort((x, y) => x - y);
     const med = a[Math.floor(a.length / 2)] || 0;
-    return { dv: med, angle: angleUncertainty(med, j), jitter: j };
+    return {
+      dv: med, jitter: st.typ, jitterHigh: st.high,
+      angle: angleUncertainty(med, st.typ),
+      angleWorst: angleUncertainty(med, st.high)
+    };
   }
 
   /* ---------- 加速度プレビュー（stage の painter） ---------- */
@@ -255,13 +296,107 @@
     }
     const cur = current();
     HG.dom.html('#selSuggest',
-      '推奨：' + g.interval + ' コマおき（Δv の向きの不確かさ ±' + g.angle.toFixed(0) + '°）' +
-      '<br>いまの ' + sel().interval + ' コマおき：<b>Δv の向きの不確かさ ±' +
-      cur.angle.toFixed(0) + '°</b>（ジッタの目安 ' + g.jitter.toFixed(2) + ' px）' +
-      (cur.angle > 15 ? '<br><span class="warn">⑤の判定は ±15° です。この間隔では自動算出側の' +
-        'ばらつきが判定幅を超えます。間隔を広げるか、スローで撮り直してください。</span>' : '') +
+      '推奨：' + g.interval + ' コマおき（向きの不確かさ ±' + g.angle.toFixed(0) +
+      '°／荒れるコマで ±' + g.angleWorst.toFixed(0) + '°）' +
+      '<br>いまの ' + sel().interval + ' コマおき：<b>±' + cur.angle.toFixed(0) +
+      '°／荒れるコマで ±' + cur.angleWorst.toFixed(0) + '°</b>' +
+      '（ジッタ ' + g.jitter.toFixed(2) + ' px、荒れるコマ ' + g.jitterHigh.toFixed(2) + ' px）' +
+      (cur.angleWorst > 45
+        ? '<br><span class="warn">荒れるコマでのばらつきが大きすぎます。この間隔だと、' +
+          'ブレたコマの矢印が逆を向くことがあります。間隔を広げてください。</span>'
+        : cur.angle > 15
+          ? '<br><span class="warn">⑤の判定は ±15° です。この間隔では自動算出側の' +
+            'ばらつきが判定幅を超えます。間隔を広げるか、スローで撮り直してください。</span>'
+          : '') +
       (g.accWeak ? '<br>この素材では、どの間隔でも Δv がジッタと同じくらいの大きさにとどまります。' +
                    '間隔を変えても改善しない場合は、素材の側の性質です。' : ''));
+    HG.bus.emit('quality:changed');
+  }
+
+  /**
+   * 同じ場所を通り直しているか（振り子・バネ・円運動のような往復・周期運動）。
+   *
+   * 1周期ぶんをそのまま選ぶと、往路と復路の点が重なり、矢印が同じ位置に
+   * 2本ずつ描かれて読めなくなる。単振り子で実際にそうなった。
+   * 「端から端まで（半周期）」に切ってもらうための判定。
+   *
+   * @returns {{revisit:number, ratio:number}} 通り直した点の数と割合
+   */
+  function revisits() {
+    const p = list().filter(f => f.found);
+    if (p.length < 6) return { revisit: 0, ratio: 0 };
+    const gaps = [];
+    for (let i = 0; i < p.length - 1; i++) {
+      gaps.push(Math.hypot(p[i + 1].x - p[i].x, p[i + 1].y - p[i].y));
+    }
+    gaps.sort((a, b) => a - b);
+    const gap = gaps[Math.floor(gaps.length / 2)] || 1;
+    const near = gap * 0.7;
+    let hit = 0;
+    for (let i = 0; i < p.length; i++) {
+      for (let k = i + 3; k < p.length; k++) {      // 隣接は当然近いので飛ばす
+        if (Math.hypot(p[k].x - p[i].x, p[k].y - p[i].y) < near) { hit++; break; }
+      }
+    }
+    return { revisit: hit, ratio: hit / p.length };
+  }
+
+  /** 各点の速さ（前後差分。端は片側差分） */
+  function speeds(p) {
+    return p.map((f, i) => {
+      const lo = Math.max(0, i - 1), hi = Math.min(p.length - 1, i + 1);
+      const n = hi - lo;
+      return n ? Math.hypot(p[hi].x - p[lo].x, p[hi].y - p[lo].y) / n : 0;
+    });
+  }
+
+  /**
+   * 折り返し点（速さが最小の点）がどこにあるか。
+   *
+   * ★ このアプリでいちばん見せたい1点 ★
+   * 単振り子やバネの端では「速度はほぼゼロなのに Δv は最大」になる。
+   * 「速度がゼロなら加速度もゼロ」という思い込みを壊すのはこの1点。
+   *
+   * ところが Δv は前後の速度が要るので、**区間の両端には作れない**。
+   * 端から端まできっちりトリムすると、折り返し点がちょうど区間の端に来て、
+   * いちばん見せたい矢印だけが消える。合成した振り子で実際にそうなった。
+   *   端ぴったり  … 折り返しの点そのものが無い
+   *   少し外まで  … 速さ 0.4px／|Δv| 25.6px（その区間で最大）の点が出る
+   *
+   * ただし「端が遅い」だけでは自由落下と見分けがつかない。
+   * 自由落下も静止から始まるので最初の点がいちばん遅いが、あれは折り返しでは
+   * なく、手前まで伸ばしても（手に持っている間の a=0 が入るだけで）意味が無い。
+   * 見分けるのは**両端とも遅いか**。端から端までの往復を切り取ると、
+   * 速さは真ん中で最大・両端で最小になる。自由落下は片側だけが遅い。
+   * 振り子・バネのプリセットを選んでいるときは、片側だけでも知らせる。
+   *
+   * @returns {{index:number, speed:number, medSpeed:number, atEdge:boolean,
+   *            bothEdgesSlow:boolean}|null}
+   */
+  function turningPoint() {
+    const p = list().filter(f => f.found);
+    if (p.length < 4) return null;
+    const sp = speeds(p);
+    const sorted = sp.slice().sort((a, b) => a - b);
+    const med = sorted[Math.floor(sorted.length / 2)] || 1;
+    let mi = 0;
+    for (let i = 1; i < sp.length; i++) if (sp[i] < sp[mi]) mi = i;
+    if (sp[mi] >= med * 0.5) return null;
+
+    const both = sp[0] < med * 0.5 && sp[sp.length - 1] < med * 0.5;
+    const pre = HG.state.preset;
+    const oscillatory = !!(pre && (pre.id === 'pendulum' || pre.id === 'spring'));
+    const atEdge = (mi === 0 || mi === p.length - 1) && (both || oscillatory);
+    return { index: mi, speed: sp[mi], medSpeed: med,
+             atEdge: atEdge, bothEdgesSlow: both };
+  }
+
+  /** 外から間隔を決める（自動描写モードの「間隔を広げる」）。手動で触ったのと同じ扱いにする */
+  function setIntervalTo(n) {
+    userTouched = true;
+    sel().interval = Math.max(1, Math.round(n));
+    sel().offset = 0;
+    commit();
   }
 
   function attach() {
@@ -284,5 +419,7 @@
     HG.bus.on('trim:changed', () => { if (active) apply(); else showSuggestion(); });
   }
 
-  HG.selection = { attach, list, isActive, suggest, current, leftover, drawPreview, apply, commit, refreshLabels };
+  HG.selection = { attach, list, isActive, suggest, current, jitterStats, revisits, turningPoint,
+                   leftover, drawPreview, apply, commit, refreshLabels,
+                   setInterval: setIntervalTo };
 })(window.HG = window.HG || {});

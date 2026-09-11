@@ -32,6 +32,7 @@
     ghost: null,        // ドラッグ中の仮の矢印
     checked: false,     // ⑤を表示したか
     auto: false,        // 自動モード（作図ステップを飛ばすフラグ）
+    runAll: false,      // 自動モードで⑥まで止まらずに進む
     flying: -1,         // ⑥へ矢印が移動するアニメーション（0..1、-1 で停止）
     focusZoom: 1,       // 注目モードで三角形をまとめて拡大した倍率
     savedCrop: null,    // 別枠のあいだ預かっておくクロップ
@@ -241,6 +242,30 @@
     else if (S.step === 3) collect();
   }
 
+  /**
+   * 自動描写モードの「一気に⑥まで」。
+   *
+   * ステップを飛ばすのではなく、手動の「次へ」を自分で押しているだけ。
+   * ③の集めるアニメーションも⑥の飛び戻りもそのまま通るので、
+   * 授業で提示したときに「どこから来た矢印なのか」が見える。
+   * 別系統の描画を作ると、手書きモードと結果がずれる恐れがある。
+   */
+  function runToEnd() {
+    S.runAll = true;
+    let guard = 40;
+    (function drive() {
+      if (!S.on || !S.runAll) { S.runAll = false; return; }
+      if (S.step >= 6) { S.runAll = false; updateUI(); return; }
+      /* アニメーション中は待つ（途中で割り込むと矢印が飛ぶ）。
+         ここで空回りするあいだは guard を減らさない。減らしてしまうと
+         ③の1秒のアニメーションだけで回数を使い切り、④で止まる。 */
+      if (S.collecting || S.flying >= 0) { requestAnimationFrame(drive); return; }
+      if (guard-- <= 0) { S.runAll = false; updateUI(); return; }
+      autoNext();
+      setTimeout(drive, 80);
+    })();
+  }
+
   function collect() {
     /* 矢印がスーッと滑って原点に集まる1秒間の動きが、
        「ベクトルは平行移動しても同じもの」という自由ベクトルの概念
@@ -320,7 +345,21 @@
     }
   }
 
-  /** Δv を軌道に描くときの倍率。注目モードでは実寸（三角形が閉じる） */
+  /**
+   * Δv を軌道に描くときの倍率。注目モードでは実寸（三角形が閉じる）。
+   *
+   * 長さの決め方を2つの上限のうち小さいほうにしてある。
+   *
+   *  (1) 見えている範囲の 13%
+   *      元は「動画の横幅の 13%」だった。クロップして拡大すると、
+   *      見えている範囲に対して矢印だけが相対的に長くなっていた。
+   *
+   *  (2) 隣り合う点の間隔の 1.3 倍
+   *      これを超えると矢印が隣の矢印と交差して、どの点の矢印なのかが
+   *      読めなくなる。単振り子のような**浅い弧**で決定的に効く。
+   *      振り子の弧は横に長く縦に薄い（振れ角25°で高さは弦の1割程度）ので、
+   *      (1) だけだと矢印が弧の高さの3倍になり、矢印同士が重なった。
+   */
   function backScale() {
     if (S.focus >= 0) return 1;
     const lens = [];
@@ -328,7 +367,18 @@
     if (!lens.length) return 0;
     lens.sort((a, b) => a - b);
     const med = lens[Math.floor(lens.length / 2)] || 1;
-    return med > 1e-6 ? (HG.state.video.width * 0.13) / med : 0;
+    if (med <= 1e-6) return 0;
+
+    const byArea = HG.coords.area().w * 0.13;
+    const p = pts();
+    const gaps = [];
+    for (let i = 0; i < p.length - 1; i++) {
+      gaps.push(Math.hypot(p[i + 1].x - p[i].x, p[i + 1].y - p[i].y));
+    }
+    gaps.sort((a, b) => a - b);
+    const gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+    const target = gap > 0 ? Math.min(byArea, gap * 1.3) : byArea;
+    return target / med;
   }
 
   /**
@@ -733,6 +783,7 @@
     show('#drawActions', S.on);
     show('#autoNext', S.on && S.auto && S.step < 6);
     show('#drawModeRow', !S.on);
+    updateAutoPanel();
     if (S.auto) {
       /* 自動モードでは作図の操作は出さない。表示するだけ */
       ['#fillRest', '#nextStep', '#collectBtn', '#checkBtn', '#backdrawBtn', '#drawUndo']
@@ -791,9 +842,30 @@
       return;
     }
     const k = backScale();
-    HG.dom.text('#scaleNote', k > 0
+    let txt = k > 0
       ? 'Δv は見やすさのため ×' + k.toFixed(0) + ' に伸ばしています（速度ベクトルは実寸）。'
-      : '');
+      : '';
+    /* 折り返しの点は「速度がほぼゼロなのに Δv は最大」になる。
+       このアプリの主題そのものなので、結果が出たここで名指しする。
+       ⑥より前には出さない（先に言うと予測が予測でなくなる）。 */
+    const tp = HG.selection.turningPoint();
+    if (tp && !tp.atEdge) {
+      const dv = HG.state.drawing.deltaVVectors;
+      const kk = tp.index - 1;                    // 位置 r_{k+1} に対応する Δv は k = index-1
+      const v = dv[kk];
+      if (v) {
+        const lens = dv.filter(a => a).map(a => Math.hypot(a.dx, a.dy)).sort((a, b) => a - b);
+        const here = Math.hypot(v.dx, v.dy);
+        const med = lens[Math.floor(lens.length / 2)] || 1;
+        if (here >= med) {
+          txt += (txt ? '<br>' : '') +
+            '<b>点 ' + tp.index + ' は速さが ' + tp.speed.toFixed(1) + ' px（ほかの点の ' +
+            Math.round(100 * tp.speed / tp.medSpeed) + ' %）しかありません。' +
+            'それでも Δv はこの区間で最も長いほうです。</b>';
+        }
+      }
+    }
+    HG.dom.html('#scaleNote', txt);
   }
 
   function start() {
@@ -812,11 +884,20 @@
     const preset = HG.state.preset;
     const needFree = preset && preset.freeDraw && HG.prediction.isEnabled() &&
                      !S.auto && !HG.state.drawing.prediction;
+    /* 自動描写モードでは表示を軌道に合わせておく。
+       手書きなら生徒が自分で押すが、自動では誰も押さないまま⑥まで行ってしまう。
+       単振り子のように横長で浅い軌道だと、素のままでは矢印が数ピクセルになる。 */
+    if (S.auto && !HG.view.crop) {
+      try { HG.controls.fitToTrack(); } catch (e) { /* 点が少ないときは何もしない */ }
+    }
     goto(needFree ? 0 : 1);
+    /* 自動描写モードで「一気に進む」なら、そのまま⑥まで通す */
+    if (S.auto && $('#autoRunAll').checked && !needFree) runToEnd();
   }
 
   function stop() {
     S.on = false; S.fade = 0; S.ghost = null; S.pending = null;
+    S.runAll = false;
     S.focus = -1; S.flying = -1;
     if (S.savedCrop) { HG.coords.setCrop(S.savedCrop); S.savedCrop = null; }
     document.body.classList.remove('drawing');
@@ -914,13 +995,90 @@
     done();
   }
 
+
+  /* ---------- 自動描写モードのパネル ----------
+     「気軽に撮って加速度の向きを見る」ための入口。
+     このモードでは生徒の作図が無いぶん、素材の粗さがそのまま矢印に出る。
+     Δv は二階差分なので、座標のばらつきを3倍近くに増幅する。
+
+     効くのは間隔を広げることで、ここが効率が良い。
+     間隔を n 倍にすると Δv は n² 倍になるのに、ジッタは変わらない。
+     つまり 2 倍に広げるだけで向きの精度は 4 倍になる。
+     （平滑化でも似たことはできるが、衝突やばねのように加速度が
+       急に変わる運動では本物の変化まで鈍らせてしまうので採らない。） */
+  function updateAutoPanel() {
+    const toggle = (sel, on) => { const el = $(sel); if (el) el.classList.toggle('hide', !on); };
+    const isAuto = ($('#drawMode').value === 'auto');
+    toggle('#autoSetupRow', !S.on && isAuto);
+    if (S.on || !isAuto) return;
+
+    const box = $('#autoQuality'), btn = $('#autoWiden');
+    if (HG.drawing.counts().n < 3 || !HG.selection.isActive()) {
+      HG.dom.html('#autoQuality', '先に追跡（または手動打点）と、使うコマの決定をしてください。');
+      btn.classList.add('hide');
+      return;
+    }
+    const cur = HG.selection.current();
+    const g = HG.selection.suggest();
+    const now = HG.state.selection.interval;
+
+    /* しきい値は甘めに取ってある。荒れるコマの見積もりは
+       安全側（実測よりも悪く出る）なので、そのまま警告にすると鳴りすぎる。 */
+    const verdict = cur.angleWorst <= 25
+      ? '<span class="ok">この間隔なら向きは読めます。</span>'
+      : cur.angleWorst <= 60
+        ? '<span class="warn">おおむね読めますが、ブレの大きいコマでは矢印が斜めに転ぶことがあります。</span>'
+        : '<span class="warn">この素材とこの間隔では、矢印が逆を向くことがあります。間隔を広げてください。</span>';
+
+    HG.dom.html('#autoQuality',
+      'いまの ' + now + ' コマおき：加速度の向きの不確かさ <b>±' + cur.angle.toFixed(0) +
+      '°</b>（荒れるコマで ±' + cur.angleWorst.toFixed(0) + '°）<br>' + verdict);
+
+    /* 折り返し点が区間の端にあると、いちばん見せたい矢印だけが出ない。
+       これも間隔では直らない。トリムの問題。 */
+    const tp = HG.selection.turningPoint();
+    if (tp && tp.atEdge) {
+      HG.dom.html('#autoQuality', $('#autoQuality').innerHTML +
+        '<br><span class="warn">折り返し点が区間のいちばん端にあります。</span>' +
+        'Δv は前後の速度から作るので、区間の端には矢印が出ません。' +
+        '<b>折り返しの少し手前から、反対の端の少し先まで</b>トリムしてください。');
+    }
+
+    /* 往復運動を1周期ぶん選んでいると、矢印が同じ場所に2本ずつ重なる。
+       これは間隔では直らない。トリムの問題なので、そう言う。 */
+    const rv = HG.selection.revisits();
+    if (rv.ratio > 0.3) {
+      HG.dom.html('#autoQuality', $('#autoQuality').innerHTML +
+        '<br><span class="warn">同じ場所を通り直しています（' + rv.revisit + ' 点）。</span>' +
+        'このままだと行きと帰りの矢印が同じ位置に重なります。' +
+        '<b>1往復（1周）より短く</b>トリムしてください。' +
+        '振り子やバネなら端から端まで、円運動なら1周の半分ほどが読みやすい範囲です。');
+    }
+
+    if (g.interval > now) {
+      btn.classList.remove('hide');
+      btn.textContent = '間隔を ' + g.interval + ' コマおきに広げる（±' +
+                        g.angleWorst.toFixed(0) + '° になります）';
+    } else {
+      btn.classList.add('hide');
+    }
+  }
+
   function attach() {
     $('#startDraw').onclick = start;
     $('#drawReset').onclick = () => { HG.drawing.reset(); S.checked = false; goto(1); };
     $('#drawUndo').onclick = undo;
     $('#drawExit').onclick = stop;
     $('#autoNext').onclick = autoNext;
-    $('#drawMode').onchange = e => { S.auto = (e.target.value === 'auto'); };
+    $('#drawMode').onchange = e => { S.auto = (e.target.value === 'auto'); updateAutoPanel(); };
+    $('#autoWiden').onclick = () => {
+      HG.selection.setInterval(HG.selection.suggest().interval);
+      updateAutoPanel();
+    };
+    HG.bus.on('selection:changed', updateAutoPanel);
+    HG.bus.on('points:changed', updateAutoPanel);
+    HG.bus.on('quality:changed', updateAutoPanel);
+    updateAutoPanel();
     $('#nextStep').onclick = () => goto(S.step + 1);
     $('#collectBtn').onclick = collect;
     $('#checkBtn').onclick = check;
