@@ -31,26 +31,15 @@
     pending: null,      // タップ式のときの始点
     ghost: null,        // ドラッグ中の仮の矢印
     checked: false,     // ⑤を表示したか
-    auto: false,        // 自動モード（作図ステップを飛ばすフラグ）
-    flying: -1,         // ⑥へ矢印が移動するアニメーション（0..1、-1 で停止）
-    focusZoom: 1,       // 注目モードで三角形をまとめて拡大した倍率
-    savedCrop: null,    // 別枠のあいだ預かっておくクロップ
-    focus: -1           // 1点ずつ見るときの Δv 番号（-1 で全部）
+    auto: false         // 自動モード（作図ステップを飛ばすフラグ）
   };
-
-  /* ⑥で軌道の上に何を描くか。
-     「別枠で作った Δv が、突然そこに現れる」ように見えるのを避けるため、
-     既定で速度も一緒に出す。速度（接線）と Δv の関係がその場で読める。 */
-  const L = { pos: false, vel: true, dv: true, pred: true };
 
   const COLORS = {
     pos: '#0b6bcb', vel: '#12a150', dv: '#ff7a00',
     auto: '#c026d3', mine: '#ff7a00', pred: 'rgba(120,120,120,.75)'
   };
 
-  /* 座標変換は必ずここを通す。クロップ（軌道に合わせる）が入ると
-     x * view.scale ではずれる */
-  function C(x, y) { return HG.coords.toCanvas(x, y); }
+  function C(x, y) { const s = HG.view.scale; return { x: x * s, y: y * s }; }
   function pts() { return HG.drawing.pts(); }
   function isHodo() { return S.on && (S.step === 4 || S.step === 5); }
   function active() { return S.on; }
@@ -205,30 +194,14 @@
   }
 
   function goto(step) {
-    const from = S.step;
     S.step = step;
     S.pending = null;
-    S.flying = -1;
     if (S.auto) autoFill(step);
     S.fade = (step === 4 || step === 5) ? 0.86 : 0;
-
-    /* 別枠（④⑤）は抽象的な図なので、軌道に合わせたクロップの中に描くと
-       横幅が足りない（一次元運動では特に）。別枠のあいだだけ全体表示に戻し、
-       軌道に戻る⑥でクロップを復元する。 */
-    if (step === 4 || step === 5) {
-      if (HG.view.crop && !S.savedCrop) S.savedCrop = HG.view.crop;
-      HG.coords.setCrop(null);
-    } else if (S.savedCrop) {
-      HG.coords.setCrop(S.savedCrop);
-      S.savedCrop = null;
-    }
-    if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
-    HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
+    HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null);
     updateUI();
     updateReveal();
     HG.stage.render();
-    /* 別枠から軌道へ移るときだけ、矢印を滑らせる */
-    if (step === 6 && (from === 4 || from === 5)) flyBack();
   }
 
   /* ---------- ③ 集める（必ずアニメーションさせる） ---------- */
@@ -279,13 +252,11 @@
   function paintTrack(ctx) {
     const o = HG.state.drawing.origin;
     const d = HG.state.drawing;
-    const six = (S.step === 6);
-    /* ⑥ではレイヤーで選ぶ。①②を全部残すと矢印だらけで Δv が読めないが、
-       速度を消すと Δv が宙に浮いて見える。既定は「速度＋Δv」。 */
-    const showPos = six ? (L.pos && S.focus < 0) : true;
-    const showVel = six ? (L.vel && S.focus < 0) : (S.step >= 2);
+    /* ⑥は「その位置で、この向き」を見る画面。①②の矢印を残すと
+       画面が矢印だらけになって肝心の Δv が読めない */
+    const showBuild = S.step !== 6;
 
-    if (o && showPos) {
+    if (o && showBuild) {
       const c = C(o.x, o.y);
       ctx.save();
       ctx.fillStyle = '#12161c';
@@ -294,18 +265,14 @@
       ctx.fillText('基準点', c.x + 8 * HG.view.dpr, c.y - 8 * HG.view.dpr);
       ctx.restore();
 
-      /* ①を描き終えたら薄くする。一次元運動では位置ベクトルと速度ベクトルが
-         同じ直線に乗るので、同じ濃さだと②が描けない。 */
-      const dim = (S.step >= 2);
       d.positionVectors.forEach(v => {
         if (!v) return;
         const a = C(o.x, o.y), b = C(o.x + v.dx, o.y + v.dy);
-        HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
-          { color: COLORS.pos, width: dim ? 1.5 : 2, head: dim ? 6 : 8, alpha: dim ? 0.32 : 0.9 });
+        HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.pos, width: 2, head: 8, alpha: 0.9 });
       });
     }
 
-    if (showVel) {
+    if (S.step >= 2 && showBuild) {
       const p = pts();
       d.velocityVectors.forEach((v, k) => {
         if (!v || !p[k]) return;
@@ -314,107 +281,7 @@
       });
     }
 
-    if (six) {
-      if (L.pred) paintPrediction(ctx, 'track');
-      if (L.dv) paintBackDraw(ctx);
-    }
-  }
-
-  /** Δv を軌道に描くときの倍率。注目モードでは実寸（三角形が閉じる） */
-  function backScale() {
-    if (S.focus >= 0) return 1;
-    const lens = [];
-    HG.state.drawing.deltaVVectors.forEach(v => { if (v) lens.push(Math.hypot(v.dx, v.dy)); });
-    if (!lens.length) return 0;
-    lens.sort((a, b) => a - b);
-    const med = lens[Math.floor(lens.length / 2)] || 1;
-    return med > 1e-6 ? (HG.state.video.width * 0.13) / med : 0;
-  }
-
-  /**
-   * ⑥ 1点だけを見る。
-   *
-   * 別枠で作った Δv をいきなり軌道に置くと、「突然そこに現れた矢印」に
-   * 見えてしまう。そこで軌道の上でもう一度 Δv を作図する：
-   *   ・r_k にあった速度を r_{k+1} へ平行移動して置き（破線）
-   *   ・r_{k+1} の速度を並べ
-   *   ・先端どうしを結ぶ → それが Δv
-   *   ・同じ矢印を点を始点に平行移動 → これが描き戻し
-   * ③でやった「始点をそろえる」を軌道の上で繰り返すだけなので、
-   * 別枠と軌道が同じ操作でつながる。円運動なら、この三角形の閉じる辺が
-   * 中心を向く。
-   */
-  /**
-   * 三角形をまとめて拡大する倍率。
-   * 速度も Δv も同じ倍率で伸ばすので、三角形の形と向きは変わらない（相似）。
-   * Δv だけを伸ばすと三角形が閉じなくなり、作図としては嘘になる。
-   */
-  function focusScale(vb, va, dv) {
-    const W = HG.state.video.width;
-    const lv = Math.max(Math.hypot(vb.dx, vb.dy), Math.hypot(va.dx, va.dy));
-    const ld = Math.hypot(dv.dx, dv.dy);
-    if (lv < 1e-6) return 1;
-    const wantDv = ld > 1e-6 ? (W * 0.11) / ld : Infinity;   // Δv を読める長さに
-    const capV = (W * 0.42) / lv;                            // 速度が画面をはみ出さない範囲で
-    return Math.max(1, Math.min(wantDv, capV));
-  }
-
-  function paintFocus(ctx, i) {
-    const p = pts();
-    const at = p[i + 1], from = p[i];
-    const vb0 = HG.drawing.velocity(i), va0 = HG.drawing.velocity(i + 1);
-    const dv0 = HG.state.drawing.deltaVVectors[i] || HG.drawing.autoDeltaV(i);
-    if (!at || !from || !vb0 || !va0 || !dv0) return;
-
-    const z = focusScale(vb0, va0, dv0);
-    S.focusZoom = z;
-    const vb = { dx: vb0.dx * z, dy: vb0.dy * z };
-    const va = { dx: va0.dx * z, dy: va0.dy * z };
-    const dv = { dx: dv0.dx * z, dy: dv0.dy * z };
-
-    const A = C(at.x, at.y);
-    const Tb = C(at.x + vb.dx, at.y + vb.dy);     // 平行移動した v_before の先端
-    const Ta = C(at.x + va.dx, at.y + va.dy);     // v_after の先端
-
-    /* もとの場所にあった v_before と、それをこの点へ持ってきたことを示す点線。
-       「同じ矢印を平行移動しただけ」が見えないと、③でやったことと
-       つながらない。 */
-    const F = C(from.x, from.y), Fb = C(from.x + vb.dx, from.y + vb.dy);
-    HG.arrows.draw(ctx, F.x, F.y, Fb.x, Fb.y, { color: COLORS.vel, width: 2, head: 8, alpha: 0.45 });
-    ctx.save();
-    ctx.strokeStyle = 'rgba(18,161,80,.45)';
-    ctx.lineWidth = 1.5 * HG.view.dpr;
-    ctx.setLineDash([3 * HG.view.dpr, 4 * HG.view.dpr]);
-    ctx.beginPath(); ctx.moveTo(F.x, F.y); ctx.lineTo(A.x, A.y);
-    ctx.moveTo(Fb.x, Fb.y); ctx.lineTo(Tb.x, Tb.y);
-    ctx.stroke();
-    ctx.restore();
-
-    // r_{k+1} へ平行移動した v_before（破線）と、そこでの v_after
-    HG.arrows.draw(ctx, A.x, A.y, Tb.x, Tb.y, { color: COLORS.vel, width: 2, head: 8, dash: true, alpha: 0.85 });
-    HG.arrows.draw(ctx, A.x, A.y, Ta.x, Ta.y, { color: COLORS.vel, width: 3, head: 10 });
-
-    // 先端どうしを結ぶ＝Δv（実寸）
-    HG.arrows.draw(ctx, Tb.x, Tb.y, Ta.x, Ta.y, { color: COLORS.dv, width: 3, head: 10 });
-
-    // 同じ矢印を点を始点に平行移動＝描き戻し
-    const B = C(at.x + dv.dx, at.y + dv.dy);
-    HG.arrows.draw(ctx, A.x, A.y, B.x, B.y, { color: COLORS.dv, width: 3.5, head: 11, alpha: 0.95 });
-
-    ctx.save();
-    ctx.font = (12 * HG.view.dpr) + 'px sans-serif';
-    ctx.lineWidth = 3 * HG.view.dpr;
-    ctx.strokeStyle = 'rgba(0,0,0,.7)';
-    ctx.fillStyle = '#ff9a3c';
-    const mid = { x: (Tb.x + Ta.x) / 2, y: (Tb.y + Ta.y) / 2 };
-    const away = { x: mid.x - A.x, y: mid.y - A.y };
-    const al = Math.hypot(away.x, away.y) || 1;
-    const lx = mid.x + away.x / al * 16 * HG.view.dpr;
-    const ly = mid.y + away.y / al * 16 * HG.view.dpr;
-    ctx.textAlign = 'center';
-    ctx.strokeText('この2本の差 ＝ Δv', lx, ly);
-    ctx.fillText('この2本の差 ＝ Δv', lx, ly);
-    ctx.restore();
+    if (S.step === 6) { paintPrediction(ctx, 'track'); paintBackDraw(ctx); }
   }
 
   /* ⑥ 加速度を軌道上へ描き戻す（この教材の到達点） */
@@ -458,46 +325,17 @@
       }
       return;
     }
-    if (S.focus >= 0) { paintFocus(ctx, S.focus); return; }
-
     /* 全部に同じ倍率を掛ける。長さの比を保たないと、
        「斜方投射は全部同じ長さ」「バネは離れるほど長い」が見えなくなる */
-    const k = backScale();
-    const fly = S.flying;                      // 0..1 のあいだは別枠から飛んでくる途中
-    const hs = HG.hodo.scale();
-    const ease = fly < 0 ? 1 : (fly < 0.5 ? 2 * fly * fly : 1 - Math.pow(-2 * fly + 2, 2) / 2);
+    const k = med > 1e-6 ? (HG.state.video.width * 0.13) / med : 0;
 
     d.deltaVVectors.forEach((v, i) => {
       if (!v) return;
       const at = p[HG.drawing.posIndexOfDeltaV(i)];   // 半コマずれ：r_i ではなく r_{i+1}
       if (!at) return;
-      let tail = at, sc = k;
-      if (fly >= 0) {
-        /* 別枠で Δv が始まっていた場所（速度ベクトルの先端）から、
-           軌道上の対応する点まで滑らせる。③の「集める」の逆再生。 */
-        const t0 = HG.hodo.tip(i);
-        if (t0) {
-          tail = { x: t0.x + (at.x - t0.x) * ease, y: t0.y + (at.y - t0.y) * ease };
-          sc = hs + (k - hs) * ease;
-        }
-      }
-      const a = C(tail.x, tail.y), b = C(tail.x + v.dx * sc, tail.y + v.dy * sc);
+      const a = C(at.x, at.y), b = C(at.x + v.dx * k, at.y + v.dy * k);
       HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.dv, width: 3, head: 11 });
     });
-  }
-
-  /** ⑤→⑥ で、別枠の Δv が軌道の上へ滑って移動する */
-  function flyBack() {
-    S.flying = 0;
-    const t0 = performance.now();
-    (function tick() {
-      const t = Math.min(1, (performance.now() - t0) / 900);
-      S.flying = t;
-      S.fade = 0.80 * (1 - t);
-      HG.stage.render();
-      if (t < 1) requestAnimationFrame(tick);
-      else { S.flying = -1; S.fade = 0; HG.stage.render(); }
-    })();
   }
 
   /* ③ アニメーション：矢印が滑って原点に集まる */
@@ -549,29 +387,13 @@
       ctx.restore();
     }
 
-    /* 生徒が描いた Δv。
-       階段モードでは「先端どうしを結んだ線」に段差が乗っていて、
-       そのままでは向きが斜めに見える（自由落下なら本当は鉛直）。
-       斜めの線は補助線（細い破線）にして、段差を引いた本当の Δv を実線で描く。 */
-    const stairGap = HG.hodo.stairGap();
+    /* 生徒が描いた Δv */
     d.deltaVVectors.forEach((v, k) => {
       if (!v || !HG.hodo.visible(k) || !HG.hodo.visible(k + 1)) return;
-      const t = HG.hodo.tip(k);
-      if (!t) return;
-      const a = C(t.x, t.y);
-      if (stairGap > 0.5) {
-        const e = HG.hodo.deltaVEnd(k, v);          // 見かけ（段差込み）
-        if (e) {
-          const b = C(e.x, e.y);
-          HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
-            { color: 'rgba(120,130,140,.85)', width: 1.5, head: 7, dash: true });
-        }
-      }
-      const tr = HG.hodo.deltaVTrue(k, v);          // 本当の Δv
-      if (tr) {
-        const b = C(tr.x, tr.y);
-        HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.mine, width: 3, head: 10 });
-      }
+      const t = HG.hodo.tip(k), e = HG.hodo.deltaVEnd(k, v);
+      if (!t || !e) return;
+      const a = C(t.x, t.y), b = C(e.x, e.y);
+      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.mine, width: 3, head: 10 });
     });
 
     /* ⑤ 答え合わせ：自動算出を重ねて表示する。別画面にしない。
@@ -580,7 +402,7 @@
       for (let k = 0; k < n - 2; k++) {
         if (!HG.hodo.visible(k) || !HG.hodo.visible(k + 1)) continue;
         const ref = HG.drawing.autoDeltaV(k);
-        const t = HG.hodo.tip(k), e = ref && HG.hodo.deltaVTrue(k, ref);
+        const t = HG.hodo.tip(k), e = ref && HG.hodo.deltaVEnd(k, ref);
         if (!t || !e) continue;
         const a = C(t.x, t.y), b = C(e.x, e.y);
         HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
@@ -628,7 +450,6 @@
     const med = lens[Math.floor(lens.length / 2)] || 1;
     const len = HG.state.video.width * 0.13;
     for (let k = 0; k < n - 2; k++) {
-      if (S.focus >= 0 && k !== S.focus) continue;
       const at = p[HG.drawing.posIndexOfDeltaV(k)];
       if (!at) continue;
       const dir = HG.prediction.dirAt(HG.drawing.posIndexOfDeltaV(k));
@@ -739,12 +560,8 @@
         .forEach(x => show(x, false));
       const st = STEPS[S.step - 1];
       if (st) hint((S.step === 3 ? '速度ベクトルを共通の始点へ集めています…' : st.hint.replace(/してください。?/g, 'しています。')));
-      show('#hodoRow', S.step >= 4 && S.step !== 6);
-      show('#pairRow', S.step >= 4 && S.step !== 6 && HG.hodo.state.mode === 'pair');
-      show('#gapRow', S.step >= 4 && S.step !== 6 && HG.hodo.state.mode === 'stair');
-      show('#layerRow', S.step === 6);
-      show('#focusRow', S.step === 6 && S.focus >= 0);
-      if (S.step === 6) updateScaleNote();
+      show('#hodoRow', S.step >= 4);
+      show('#pairRow', S.step >= 4 && HG.hodo.state.mode === 'pair');
       show('#drawReset', true);
       show('#drawExit', true);
       return;
@@ -755,12 +572,8 @@
     show('#collectBtn', S.on && S.step === 3);
     show('#checkBtn', S.on && S.step === 4 && complete(4));
     show('#backdrawBtn', S.on && S.step === 5);
-    show('#hodoRow', S.on && S.step >= 4 && S.step !== 6);
-    show('#layerRow', S.on && S.step === 6);
-    show('#focusRow', S.on && S.step === 6 && S.focus >= 0);
-    if (S.step === 6) updateScaleNote();
+    show('#hodoRow', S.on && S.step >= 4);
     show('#pairRow', S.on && S.step >= 4 && HG.hodo.state.mode === 'pair');
-    show('#gapRow', S.on && S.step >= 4 && S.step !== 6 && HG.hodo.state.mode === 'stair');
     show('#drawUndo', S.on && (S.step === 1 || S.step === 2 || S.step === 4));
     show('#drawReset', S.on);
     show('#drawExit', S.on);
@@ -770,30 +583,7 @@
       const sl = $('#pairSlider');
       sl.min = 0; sl.max = Math.max(0, n - 3); sl.value = HG.hodo.state.pair;
       HG.dom.text('#pairVal', 'v' + HG.hodo.state.pair + ' と v' + (HG.hodo.state.pair + 1));
-      const fs = $('#focusSlider');
-      fs.min = 0; fs.max = Math.max(0, n - 3);
-      if (S.focus >= 0) {
-        fs.value = S.focus;
-        HG.dom.text('#focusVal', '点 ' + HG.drawing.posIndexOfDeltaV(S.focus));
-      }
     }
-  }
-
-  /** Δv を実寸で描いているのか、伸ばしているのかを必ず書く */
-  function updateScaleNote() {
-    if (S.focus >= 0) {
-      HG.dom.text('#focusVal', '点 ' + HG.drawing.posIndexOfDeltaV(S.focus));
-      $('#focusSlider').value = S.focus;
-      const z = S.focusZoom || 1;
-      HG.dom.text('#scaleNote',
-        '速度も Δv も同じ ×' + z.toFixed(1) + ' で拡大しています。' +
-        '三角形の形と向きはそのままなので、閉じる辺がそのまま Δv です。');
-      return;
-    }
-    const k = backScale();
-    HG.dom.text('#scaleNote', k > 0
-      ? 'Δv は見やすさのため ×' + k.toFixed(0) + ' に伸ばしています（速度ベクトルは実寸）。'
-      : '');
   }
 
   function start() {
@@ -817,13 +607,11 @@
 
   function stop() {
     S.on = false; S.fade = 0; S.ghost = null; S.pending = null;
-    S.focus = -1; S.flying = -1;
-    if (S.savedCrop) { HG.coords.setCrop(S.savedCrop); S.savedCrop = null; }
     document.body.classList.remove('drawing');
     $('#revealBox').classList.add('hide');
     HG.controls.usePointHandler();
     HG.pointer.setPreview(null);
-    HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
+    HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null);
     updateUI();
     HG.stage.render();
   }
@@ -938,21 +726,6 @@
     };
     $('#hodoMode').onchange = e => { HG.hodo.setMode(e.target.value); done(); };
     $('#pairSlider').oninput = e => { HG.hodo.setPair(+e.target.value); done(); };
-    ['pos', 'vel', 'dv', 'pred'].forEach(key => {
-      const id = '#ly' + key.charAt(0).toUpperCase() + key.slice(1);
-      $(id).onchange = e => { L[key] = e.target.checked; HG.stage.render(); };
-    });
-    $('#focusOn').onchange = e => {
-      /* ④のペア送りで見ていた組をそのまま引き継ぐ */
-      S.focus = e.target.checked ? HG.hodo.state.pair : -1;
-      done();
-    };
-    $('#focusSlider').oninput = e => { S.focus = +e.target.value; done(); };
-    $('#hodoGap').oninput = e => {
-      HG.hodo.setGap(+e.target.value / 100);
-      HG.dom.text('#hodoGapVal', e.target.value + ' %');
-      done();
-    };
     $('#hodoZoom').oninput = e => {
       HG.hodo.setZoom(+e.target.value / 10);
       HG.dom.text('#hodoZoomVal', '×' + (+e.target.value / 10).toFixed(1));

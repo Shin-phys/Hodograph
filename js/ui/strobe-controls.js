@@ -40,11 +40,42 @@
     $('#makeStrobe').onclick = make;
     $('#toggleStrobe').onclick = () => {
       const showing = HG.stage.mode() === 'strobe';
-      HG.stage.setSource(showing ? null : HG.strobe.canvas());
+      HG.stage.setSource(showing ? null : HG.strobe.canvas(), HG.strobe.cache.scale);
       HG.dom.text('#toggleStrobe', showing ? 'ストロボ画像を表示' : '動画に戻る');
       HG.refresh();
     };
     $('#savePng').onclick = savePng;
+
+    /* 使うコマが変わったら、ストロボ画像を作り直す。
+       背景（重い中央値推定）は選択に依存しないので使い回し、
+       選ばれたコマの取り込みだけやり直す。
+       これが無いと、スライダを動かしても画像が生成時のままで、
+       「点を増やしてもプロットが増えない」ように見える（実際に踏んだ）。 */
+    HG.bus.on('selection:committed', () => { rebuild(); });
+  }
+
+  let busy = false, again = false;
+  async function rebuild() {
+    if (!HG.strobe.cache.ready) return;
+    if (busy) { again = true; return; }
+    const sel = HG.selection.list();
+    if (sel.length < 2) return;
+    busy = true;
+    HG.dom.show('#strobeBar');
+    HG.dom.text('#strobeInfo', '使うコマが変わりました。作り直しています…');
+    const bar = $('#strobeBar').firstElementChild;
+    try {
+      await HG.strobe.grabSelected(sel.map(f => f.index),
+        p => { bar.style.width = Math.round(p * 100) + '%'; });
+      recompose();
+      HG.dom.text('#strobeInfo', sel.length + ' コマで作り直しました。');
+    } catch (e) {
+      console.error(e);
+      HG.dom.text('#strobeInfo', '作り直しに失敗しました。「ストロボ画像を作る」を押し直してください。');
+    }
+    HG.dom.hide('#strobeBar');
+    busy = false;
+    if (again) { again = false; rebuild(); }
   }
 
   async function make() {
@@ -78,7 +109,7 @@
 
     HG.dom.hide('#strobeBar');
     btn.disabled = false;
-    HG.stage.setSource(HG.strobe.canvas());
+    HG.stage.setSource(HG.strobe.canvas(), HG.strobe.cache.scale);
     HG.dom.text('#toggleStrobe', '動画に戻る');
     HG.dom.show('#strobeAfter');
     HG.bus.emit('strobe:made');
@@ -151,5 +182,5 @@
     }, 'image/png');
   }
 
-  HG.strobeControls = { attach, recompose };
+  HG.strobeControls = { attach, recompose, rebuild };
 })(window.HG = window.HG || {});

@@ -126,13 +126,22 @@
     stack.length = 0;                      // すぐ捨ててメモリを空ける
 
     /* 3. 選ばれたコマだけ取り込む */
+    await grabSelected(selIndices, p => onProgress(0.6 + p * 0.4));
+    cache.ready = true;
+  }
+
+  /**
+   * 選ばれたコマだけを取り込み直す（背景はそのまま使い回す）。
+   * 背景の中央値推定が重い（720p で数秒）のに対し、選択コマの取り込みは
+   * 1〜2秒で済む。使うコマを変えるたびに作り直せるのはこのため。
+   */
+  async function grabSelected(selIndices, onProgress) {
     cache.frames = [];
     for (let k = 0; k < selIndices.length; k++) {
       cache.frames.push({ index: selIndices[k], rgb: await grab(selIndices[k]) });
-      onProgress(0.6 + k / selIndices.length * 0.4);
+      onProgress((k + 1) / Math.max(1, selIndices.length));
     }
     cache.scores = null;
-    cache.ready = true;
   }
 
   /* ---------- 差分 ---------- */
@@ -298,5 +307,5 @@
     cache.ready = false; cache.bg = null; cache.frames = []; cache.scores = null;
   }
 
-  HG.strobe = { capture, compose, otsu, clear, cache, maxMaskRatio, canvas: () => out };
+  HG.strobe = { capture, grabSelected, compose, otsu, clear, cache, maxMaskRatio, canvas: () => out };
 })(window.HG = window.HG || {});

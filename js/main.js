@@ -49,6 +49,14 @@
       else if (p.sample) start(p.sample);
     };
 
+    /* ホームへ戻る。読み込んだ動画・追跡結果・作図をすべて捨てるので、
+       状態を中途半端に残さないよう読み込み直す（タイルの画面から始まる） */
+    $('#goHome').onclick = () => {
+      const dirty = HG.state.frames.length > 0;
+      if (dirty && !confirm('最初の画面（運動を選ぶ）に戻ります。\n読み込んだ動画と、追跡・作図の結果は消えます。よろしいですか？')) return;
+      location.reload();
+    };
+
     /* ストロボ画像を作りに来た生徒が、ベクトル作図に入る入口 */
     $('#goVectors').onclick = () => {
       document.body.classList.remove('mode-strobe');

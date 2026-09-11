@@ -47,15 +47,8 @@
     // フェーズ1で決める。追跡・背景推定より前に確定させる
     trim: { inIndex: 0, outIndex: null },
 
-    /* フェーズ3で決める。つまみは interval（何コマおきに使うか）だけ。
-         startIndex … 最初に使うコマ（トリムのイン点 + offset。派生値）
-         offset     … 開始をずらす量（0〜interval-1）。末尾の端数を前に出すため
-         interval   … 何コマおきに使うか
-         count      … 点の数の**上限**（区間が長いとき打ち切る）。点数そのものではない
-       点の数は「区間 ÷ interval」で決まり、末尾の端数は捨てる。
-       最後の1区間だけ短くすると Δt が不揃いになり、その1点のために
-       前後3本の Δv が壊れるため。 */
-    selection: { startIndex: 0, offset: 0, interval: 3, count: 24 },
+    // フェーズ3で決める
+    selection: { startIndex: 0, interval: 1, count: 10 },
 
     // 生徒の作図。フェーズ4で使う
     drawing: {

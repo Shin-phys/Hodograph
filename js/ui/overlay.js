@@ -16,7 +16,6 @@
 
   function drawPoints(ctx) {
     if (HG.draw && HG.draw.isHodo()) return;   // 別枠の表示中は軌道の点を描かない
-    const s = HG.view.scale;
     const strobe = HG.stage.mode() === 'strobe';
     const dpr = HG.view.dpr;
     const inI = HG.state.trim.inIndex;
@@ -37,8 +36,8 @@
       if (!options.showAll && !isCur && !isSel) continue;
 
       const inRange = f.index >= inI && f.index <= outI;
-      const x = (strobe ? f.x : f.rawX) * s;
-      const y = (strobe ? f.y : f.rawY) * s;
+      const c = HG.coords.toCanvas(strobe ? f.x : f.rawX, strobe ? f.y : f.rawY);
+      const x = c.x, y = c.y;
       const R = Math.max(5, (isSel ? 7 : 5) * dpr) * (isCur ? 1.4 : 1);
 
       const color = !inRange ? 'rgba(150,150,150,.55)'
@@ -83,10 +82,11 @@
     const start = HG.state.tracking.markerStart;
     const p = m || start;
     if (!p) return;
-    const s = HG.view.scale, r = Math.max(8, 9 * HG.view.dpr);
+    const r = Math.max(8, 9 * HG.view.dpr);
+    const c = HG.coords.toCanvas(p.x, p.y);
     ctx.strokeStyle = m ? 'rgba(255,210,0,.95)' : 'rgba(255,210,0,.5)';
     ctx.lineWidth = Math.max(2, 2 * HG.view.dpr);
-    ctx.strokeRect(p.x * s - r, p.y * s - r, r * 2, r * 2);
+    ctx.strokeRect(c.x - r, c.y - r, r * 2, r * 2);
   }
 
   HG.overlay = { options, drawPoints, drawMarker };

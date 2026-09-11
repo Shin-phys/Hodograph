@@ -11,13 +11,8 @@
 <div class="wrap">
 
 <header>
-  <div class="head-row">
-    <div>
-      <h1>運動ベクトル可視化アプリ</h1>
-      <div class="phase">動画から速度・加速度ベクトルを作図する</div>
-    </div>
-    <button id="goHome" class="ghost hide">← ホーム</button>
-  </div>
+  <h1>運動ベクトル可視化アプリ</h1>
+  <div class="phase">動画から速度・加速度ベクトルを作図する</div>
 </header>
 
 <!-- ============ 画面1：読み込み ============ -->
@@ -97,10 +92,9 @@
 <!-- ============ 画面2：コマ送りと打点 ============ -->
 <section id="screen2" class="hide">
 
-  <div class="col-main">
   <div class="card pred-strip hide" id="predStrip"></div>
 
-  <div class="card" id="stageCard">
+  <div class="card">
     <div id="stage">
       <video id="vid" playsinline muted class="hide"></video>
       <canvas id="cv"></canvas>
@@ -112,16 +106,8 @@
       <span class="mono" id="frameLabel">コマ 0 / 0</span>
       <span class="mono sub" id="timeLabel">t = 0.000 s</span>
     </div>
-    <div class="row tight spaced-sm">
-      <button id="fitTrack" class="grow">軌道に合わせる</button>
-      <button id="fitAll" class="ghost">全体</button>
-    </div>
-    <div class="sub mono spaced-sm" id="fitLabel">全体を表示中</div>
   </div>
 
-  </div><!-- /col-main -->
-
-  <div class="col-side">
   <div class="card card-tool">
     <h2>コマ送り</h2>
     <div class="row tight">
@@ -193,14 +179,8 @@
     </div>
     <div class="row spaced">
       <label class="chk"><input type="checkbox" id="autoAdv" checked> 打点したら
-        <input type="number" id="advStep" value="2" min="1" max="60"> コマ進む</label>
+        <input type="number" id="advStep" value="3" min="1" max="60"> コマ進む</label>
     </div>
-    <div class="sub">この自動送りが、手動打点の<b>等間隔を保証しています</b>。切ると Δt が不揃いになります。</div>
-    <div class="row tight spaced">
-      <button id="halveStep" class="grow">間を埋める（点を倍にする）</button>
-      <button id="cancelFill" class="ghost hide">やめる</button>
-    </div>
-    <div class="sub" id="fillInfo">粗く打ってしまっても、あとから間のコマへ順に案内します。撮り直しは要りません。</div>
     <div class="row tight spaced-sm">
       <label class="chk"><input type="checkbox" id="showAll" checked> 打点をすべて表示</label>
       <label class="chk"><input type="checkbox" id="showNum" checked> 番号を表示</label>
@@ -211,13 +191,16 @@
   <div class="card card-tool">
     <h2>使うコマ（等間隔）</h2>
     <div class="slider">
-      <label>何コマおきに使うか <span class="mono" id="selIntervalVal">3 コマおき</span></label>
-      <input type="range" id="selInterval" min="1" max="30" value="3">
+      <label>開始コマ <span class="mono" id="selStartVal">0</span></label>
+      <input type="range" id="selStart" min="0" max="100" value="0">
     </div>
-    <div class="sub mono" id="selInfo"></div>
-    <div class="slider spaced">
-      <label>開始をずらす <span class="mono" id="selOffsetVal">0 コマ</span></label>
-      <input type="range" id="selOffset" min="0" max="5" value="0">
+    <div class="slider">
+      <label>間隔 <span class="mono" id="selIntervalVal">1 コマ</span></label>
+      <input type="range" id="selInterval" min="1" max="30" value="1">
+    </div>
+    <div class="slider">
+      <label>個数 <span class="mono" id="selCountVal">10 点</span></label>
+      <input type="range" id="selCount" min="3" max="20" value="10">
     </div>
     <div class="row tight">
       <button id="useSuggest" class="grow">推奨の間隔にする</button>
@@ -226,17 +209,11 @@
       <label class="chk"><input type="checkbox" id="showPreview"> 加速度のプレビューを出す（教師用・<b>答えが見えます</b>）</label>
     </div>
     <div class="sub spaced" id="selSuggest"></div>
-    <details class="spaced">
-      <summary>点の数の上限</summary>
-      <div class="slider spaced-sm">
-        <label>最大 <span class="mono" id="selCountVal">24 点</span></label>
-        <input type="range" id="selCount" min="3" max="30" value="24">
-      </div>
-      <div class="sub">区間が長いと点が多くなりすぎてストロボ画像が潰れます。その上限です。</div>
-    </details>
+    <div class="sub mono spaced-sm" id="selInfo"></div>
     <div class="sub spaced">
-      使う範囲は<b>トリム</b>で決めます。ここでは「何コマおきに使うか」だけを決めてください。
-      間隔を狭めると点が増え、広げると減ります。「Δv の向きの不確かさ」が、その間隔で読み取れる精度です。
+      「Δv の向きの不確かさ」が、この素材で読み取れる精度です。間隔が狭いとジッタに埋もれ、
+      広いと曲率のバイアスが乗ります。教師用のプレビューを出すと、間隔を動かすたびに
+      加速度ベクトルがその場で更新されます（生徒に見せる前に切ってください）。
     </div>
   </div>
 
@@ -308,31 +285,10 @@
         <label>別枠の拡大 <span class="mono" id="hodoZoomVal">×1.0</span></label>
         <input type="range" id="hodoZoom" min="10" max="80" value="10">
       </div>
-      <div class="slider hide spaced-sm" id="gapRow">
-        <label>段差（0 にすると全部重なります） <span class="mono" id="hodoGapVal">100 %</span></label>
-        <input type="range" id="hodoGap" min="0" max="100" value="100">
-      </div>
       <div class="slider hide spaced-sm" id="pairRow">
         <label>組を送る <span class="mono" id="pairVal"></span></label>
         <input type="range" id="pairSlider" min="0" max="8" value="0">
       </div>
-    </div>
-    <div id="layerRow" class="hide spaced">
-      <div class="sub">軌道の上に何を描くか</div>
-      <div class="row tight spaced-sm">
-        <label class="chk"><input type="checkbox" id="lyPos"> ① 位置</label>
-        <label class="chk"><input type="checkbox" id="lyVel" checked> ② 速度</label>
-        <label class="chk"><input type="checkbox" id="lyDv" checked> ④ 加速度</label>
-        <label class="chk"><input type="checkbox" id="lyPred" checked> 予測</label>
-      </div>
-      <div class="row spaced-sm">
-        <label class="chk"><input type="checkbox" id="focusOn"> 1点ずつ見る（軌道の上で三角形を作る）</label>
-      </div>
-      <div class="slider hide spaced-sm" id="focusRow">
-        <label>どの点 <span class="mono" id="focusVal"></span></label>
-        <input type="range" id="focusSlider" min="0" max="8" value="0">
-      </div>
-      <div class="sub mono spaced-sm" id="scaleNote"></div>
     </div>
     <div class="sub" id="checkResult"></div>
     <div id="revealBox" class="reveal hide"></div>
@@ -356,7 +312,6 @@
     </div>
     <div class="sub spaced">開発者コンソールで <span class="mono">state.frames</span> を確認できます（<span class="mono">window.state</span>）。</div>
   </div>
-  </div><!-- /col-side -->
 
 </section>
 </div>

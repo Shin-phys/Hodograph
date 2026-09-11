@@ -22,8 +22,12 @@
   function show(p) {
     const cv = HG.stage.canvas();
     const r = cv.getBoundingClientRect();
-    const cssX = p.cx / (cv.width / r.width);
-    const cssY = p.cy / (cv.height / r.height);
+    /* ルーペの位置は #stage を基準に置くので、キャンバスが中央寄せで
+       ずれているぶんを足す（高さ制限で幅が余ることがある） */
+    const host = cv.parentElement.getBoundingClientRect();
+    const offX = r.left - host.left, offY = r.top - host.top;
+    const cssX = offX + p.cx / (cv.width / r.width);
+    const cssY = offY + p.cy / (cv.height / r.height);
 
     el.style.display = 'block';
     el.style.width = (D / 2) + 'px';
@@ -31,7 +35,7 @@
     let lx = cssX - D / 4;
     let ly = cssY - D / 2 - 42;          // 指の少し上に出す
     if (ly < 4) ly = cssY + 24;          // 上端では下に逃がす
-    lx = Math.max(2, Math.min(r.width - D / 2 - 2, lx));
+    lx = Math.max(2, Math.min(host.width - D / 2 - 2, lx));
     el.style.left = lx + 'px';
     el.style.top = ly + 'px';
 

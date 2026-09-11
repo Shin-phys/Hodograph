@@ -30,10 +30,11 @@
     t.target = { h: preset.hue, s: 0.6, v: 0.6 };
     t.markerStart = null;
     HG.state.strobe.cutoutRadius = preset.cutoutRadius;
-    HG.state.selection.count = preset.count;
+    /* 点の数は間隔から決まるので、preset.count は使わない。
+       上限は既定（24点）のままにしておく。 */
     HG.hodo.setMode(preset.hodoMode);
     const sel = $('#hodoMode'); if (sel) sel.value = preset.hodoMode;
-    $('#selCount').value = preset.count;
+    $('#selCount').value = HG.state.selection.count;
 
     document.body.classList.toggle('mode-strobe', !!preset.strobeOnly);
     document.body.classList.toggle('mode-free', preset.id === 'free');
@@ -56,10 +57,11 @@
   function showNote(preset) {
     const tips = (preset.shootTips || []).map(t =>
       '<div class="spaced-sm">' + t.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') + '</div>').join('');
+    /* preset.note（この運動で何が起きるか）はここでは出さない。
+       先に読ませると「予測 → 検証」の驚きが消える。⑤以降の「解説」で出す。 */
     HG.dom.html('#presetNote',
       '<div class="lead">' + preset.name + '</div>' +
-      (preset.note ? '<div class="sub spaced-sm">' + preset.note + '</div>' : '') +
-      (tips ? '<div class="sub">' + tips + '</div>' : ''));
+      (tips ? '<div class="sub spaced-sm">' + tips + '</div>' : ''));
 
     /* 自由測定モードでは、守るべきルールを一つだけ常時表示する。
        一つだと分かっていれば、生徒はけっこう守る。 */
@@ -81,6 +83,7 @@
     HG.prediction.setPreset(preset);
     HG.dom.hide('#screen0');
     HG.dom.show('#screen1');
+    HG.dom.show('#goHome');
     window.scrollTo(0, 0);
   }
 
@@ -93,6 +96,7 @@
     $('#backToTiles').onclick = () => {
       HG.dom.show('#screen0');
       HG.dom.hide('#screen1');
+      HG.dom.hide('#goHome');
       window.scrollTo(0, 0);
     };
     HG.dom.html('#ideaList', HG.presets.ideas.map(t => '<li>' + t + '</li>').join(''));

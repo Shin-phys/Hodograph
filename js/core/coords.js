@@ -17,16 +17,30 @@
 (function (HG) {
   'use strict';
 
-  /* 元解像度ピクセル → キャンバス実ピクセル の倍率 */
-  const view = { scale: 1, dpr: 1 };
+  /**
+   * 表示の状態。
+   *   scale … 元解像度ピクセル → キャンバス実ピクセル の倍率
+   *   ox,oy … 表示している範囲の左上（元解像度座標）。「軌道に合わせる」で動く
+   *   crop  … 表示範囲（元解像度座標）。null なら全体
+   *
+   * 座標変換はこの2つの関数だけを通すこと。
+   * 直接 x * view.scale と書くと、クロップしたときにずれる。
+   */
+  const view = { scale: 1, dpr: 1, ox: 0, oy: 0, crop: null };
 
   HG.view = view;
   HG.coords = {
     /** キャンバス実ピクセル → 元解像度座標 */
-    toOriginal(cx, cy) { return { x: cx / view.scale, y: cy / view.scale }; },
+    toOriginal(cx, cy) { return { x: cx / view.scale + view.ox, y: cy / view.scale + view.oy }; },
     /** 元解像度座標 → キャンバス実ピクセル */
-    toCanvas(x, y) { return { x: x * view.scale, y: y * view.scale }; },
+    toCanvas(x, y) { return { x: (x - view.ox) * view.scale, y: (y - view.oy) * view.scale }; },
     /** 画面座標の y → 物理座標の y（上向き正）。表示・出力の直前だけで使う */
-    toPhysicsY(y) { return HG.state.video.height - y; }
+    toPhysicsY(y) { return HG.state.video.height - y; },
+
+    /** 表示範囲（元解像度座標）。クロップしていなければ全体 */
+    area() {
+      return view.crop || { x: 0, y: 0, w: HG.state.video.width, h: HG.state.video.height };
+    },
+    setCrop(c) { view.crop = c; }
   };
 })(window.HG = window.HG || {});

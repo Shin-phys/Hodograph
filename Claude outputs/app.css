@@ -13,9 +13,8 @@ h1{font-size:17px; margin:0; letter-spacing:.02em;}
 ul.guide{margin:6px 0 0 -8px; padding-left:20px;}
 
 /* 画面2：ステージ */
-#stage{position:relative; background:#0d1117; border-radius:var(--radius); overflow:hidden;
-       touch-action:none; display:flex; justify-content:center;}
-#cv{display:block; touch-action:none;}
+#stage{position:relative; background:#0d1117; border-radius:var(--radius); overflow:hidden; touch-action:none;}
+#cv{display:block; width:100%; touch-action:none;}
 #vid{display:block; width:100%; background:#000;}
 #loupe{position:absolute; pointer-events:none; display:none; z-index:5;}
 /* ヒントは必ず pointer-events:none にすること。
@@ -60,29 +59,3 @@ body.mode-strobe #drawCard{display:none;}
 .reveal{margin-top:12px; padding:10px 12px; border-radius:10px;
         background:#f2f7fd; border:1px solid #cfe2f8;}
 .reveal-title{font-weight:700; font-size:13px; color:var(--accent); margin-bottom:4px;}
-
-/* ===== ヘッダー ===== */
-.head-row{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
-#goHome{min-height:36px; padding:0 12px; font-size:13px; white-space:nowrap;}
-
-/* ===== レイアウト =====
-   スマホ：キャンバスを画面の上に貼り付け、操作はその下でスクロールする。
-           キャンバスの高さは画面の 42% までに抑える（stage.js 側で制限）。
-   PC・タブレット：キャンバスを左に固定し、操作は右の列に流す。
-   どちらも「キャンバスを見ながら操作ボタンを押せる」ことが目的。 */
-@media (min-width:900px){
-  .wrap{max-width:1240px;}
-  #screen2{display:grid; grid-template-columns:minmax(0,1.1fr) minmax(360px,0.9fr);
-           gap:14px; align-items:start;}
-  .col-main{position:sticky; top:10px;}
-  #screen0 .tiles{grid-template-columns:1fr 1fr 1fr;}
-  #screen1{display:grid; grid-template-columns:1fr 1fr; gap:0 14px; align-items:start;}
-  #screen1 > .card{margin-bottom:14px;}
-}
-@media (max-width:899px){
-  .col-main{position:sticky; top:0; z-index:20; background:var(--bg); padding-top:6px;}
-  #stageCard{margin-bottom:8px;}
-}
-
-/* ===== ⑥のレイヤー操作 ===== */
-#layerRow{border-top:1px solid var(--line); padding-top:10px;}
