@@ -296,15 +296,17 @@
     <div class="row tight spaced hide" id="drawActions">
       <button id="fillRest" class="hide grow">残りを自動で描く</button>
       <button id="nextStep" class="primary hide grow">次のステップへ</button>
-      <button id="collectBtn" class="primary hide grow">集める</button>
+      <button id="collectBtn" class="primary hide grow">始点を揃える</button>
+      <button id="restPairs" class="hide grow">残りの組を自動で</button>
       <button id="checkBtn" class="primary hide grow">答え合わせ</button>
-      <button id="backdrawBtn" class="primary hide grow">軌道に描き戻す</button>
+      <button id="advBtn" class="ghost hide grow">発展：ホドグラフ</button>
       <button id="autoNext" class="primary hide grow">次へ</button>
       <button id="drawUndo" class="ghost hide">1本消す</button>
       <button id="drawReset" class="ghost hide">最初から</button>
       <button id="drawExit" class="ghost hide">作図をやめる</button>
     </div>
     <div id="hodoRow" class="hide spaced">
+      <div class="sub spaced-sm">発展。速度ベクトルの始点を1つの原点に集めた図です。⑤の軌道上の Δv と行き来しながら見てください。</div>
       <select id="hodoMode">
         <option value="all">全集合（矢印をすべて重ねる）</option>
         <option value="pair">ペア送り（2本ずつ送る）</option>
@@ -328,7 +330,7 @@
       <div class="row tight spaced-sm">
         <label class="chk"><input type="checkbox" id="lyPos"> ① 位置</label>
         <label class="chk"><input type="checkbox" id="lyVel" checked> ② 速度</label>
-        <label class="chk"><input type="checkbox" id="lyDv" checked> ④ 加速度</label>
+        <label class="chk"><input type="checkbox" id="lyDv" checked> Δv（加速度）</label>
         <label class="chk"><input type="checkbox" id="lyPred" checked> 予測</label>
       </div>
       <div class="row spaced-sm">

@@ -5,11 +5,26 @@
    自動計算した矢印を最初から出すと「見た」で終わり「導いた」にならない。
    ステップは順序制約付きで、前を終えるまで次へ進めない。
 
+   本筋は最初から最後までストロボ画像の上で完結する。別枠には出さない。
+   ③④は隣り合う速度ベクトルの組ごとに繰り返すループで、組を送りながら
+   Δv を軌道上に1本ずつ積み上げる。
+
+     ③ v_k だけを r_k → r_{k+1} へ前送りして、2本の始点を揃える
+        （v_{k+1} の始点はもともと r_{k+1} にある。動かすのは1本だけ）
+     ④ 先端どうしを結んで Δv を描き、それを r_{k+1} へ置く
+        → k を1つ進めて③へ戻る
+     ⑤ 位置・速度を消して Δv だけを残す（到達点）
+     ⑥ 答え合わせ（軌道の上で重ねる）
+
+   別枠（ホドグラフ）は発展。⑤⑥から呼び出す。円運動では軌道も円・
+   ホドグラフも円になり、初学者には2つの円の区別がつかない。それが
+   美しさとして見えるのは③〜⑤で「Δv は中心を向く」が入った後だけ。
+
    スナップ（磁石）はステップごとに切り替える。
      基準点 … あり（最寄りの黒点）
      ① 位置ベクトル … あり（黒点の中心）
      ② 速度ベクトル … あり（黒点の中心）
-     ③ 始点の統一 … 自動
+     ③ 始点を揃える … 自動
      ④ Δv … **なし**
 
    ④にスナップを掛けない理由：吸着先は「速度ベクトルの先端」になるが、
@@ -26,17 +41,24 @@
     on: false,          // 作図モードに入っているか
     step: 0,            // 1..6
     fade: 0,            // ストロボを薄くする度合い
-    collecting: false,  // ③のアニメーション中
     t: 0,               // アニメーションの進み（0..1）
     pending: null,      // タップ式のときの始点
     ghost: null,        // ドラッグ中の仮の矢印
-    checked: false,     // ⑤を表示したか
+    checked: false,     // ⑥を表示したか
     auto: false,        // 自動モード（作図ステップを飛ばすフラグ）
     runAll: false,      // 自動モードで⑥まで止まらずに進む
-    flying: -1,         // ⑥へ矢印が移動するアニメーション（0..1、-1 で停止）
     focusZoom: 1,       // 注目モードで三角形をまとめて拡大した倍率
     savedCrop: null,    // 別枠のあいだ預かっておくクロップ
-    focus: -1           // 1点ずつ見るときの Δv 番号（-1 で全部）
+    focus: -1,          // 1点ずつ見るときの Δv 番号（-1 で全部）
+
+    /* ③④の組送り */
+    pair: 0,            // いま扱っている組 k（Δv の番号でもある）
+    aligned: false,     // その組の③が済んだか
+    slide: -1,          // ③ v_k が r_k → r_{k+1} へ滑る（0..1、-1 で停止）
+    settle: -1,         // ④ Δv が r_{k+1} へ滑る（0..1、-1 で停止）
+    zoom: 1,            // ③④で三角形をまとめて拡大する倍率（全組で共通）
+    flying: -1,         // 発展から軌道へ戻るアニメーション（0..1、-1 で停止）
+    advanced: false     // 発展：別枠（ホドグラフ）を表示中
   };
 
   /* ⑥で軌道の上に何を描くか。
@@ -53,7 +75,109 @@
      x * view.scale ではずれる */
   function C(x, y) { return HG.coords.toCanvas(x, y); }
   function pts() { return HG.drawing.pts(); }
-  function isHodo() { return S.on && (S.step === 4 || S.step === 5); }
+  function isHodo() { return S.on && S.advanced; }
+
+  /* ---------- 一次元運動の判定と、⑤で Δv 列をずらす向き ----------
+     台車・自由落下・バネでは v_k と v_{k+1} が同じ直線に乗る。
+     手順は二次元とまったく同じだが、表示だけ手当てが要る。 */
+  function is1D() {
+    const p = HG.state.preset;
+    if (p && p.dim === 1) return true;
+    const q = pts();
+    if (q.length < 3) return false;
+    let mnx = q[0].x, mxx = q[0].x, mny = q[0].y, mxy = q[0].y;
+    q.forEach(f => {
+      mnx = Math.min(mnx, f.x); mxx = Math.max(mxx, f.x);
+      mny = Math.min(mny, f.y); mxy = Math.max(mxy, f.y);
+    });
+    const w = mxx - mnx, h = mxy - mny;
+    return Math.min(w, h) <= Math.max(w, h) * 0.12;
+  }
+
+  /** 主に縦の運動なら右、主に横の運動なら下（階段モードと同じ判定） */
+  function offsetDir() {
+    const q = pts();
+    if (q.length < 2) return { x: 0, y: 0 };
+    let mnx = q[0].x, mxx = q[0].x, mny = q[0].y, mxy = q[0].y;
+    q.forEach(f => {
+      mnx = Math.min(mnx, f.x); mxx = Math.max(mxx, f.x);
+      mny = Math.min(mny, f.y); mxy = Math.max(mxy, f.y);
+    });
+    return (mxy - mny) >= (mxx - mnx) ? { x: 1, y: 0 } : { x: 0, y: 1 };
+  }
+
+  /**
+   * ⑤の一覧に限り、Δv の列を軌道と垂直に平行移動する。
+   * 一次元では Δv が黒点の列と同じ直線に並んで読めないため。
+   * ⑤は比較のための表示であって作図ではないので、ここでのずらしは嘘にならない。
+   * ③④ではずらさない（ずらすと Δv が斜めになり、作図として嘘になる）。
+   */
+  function listOffset() {
+    if (!is1D()) return { x: 0, y: 0 };
+    const d = offsetDir();
+    const m = HG.coords.area().w * 0.07;
+    return { x: d.x * m, y: d.y * m };
+  }
+
+  /* ---------- ③④の拡大倍率（全組で共通にする） ----------
+     組ごとに変えると、組を送るたびに図が跳ねて読みにくい。
+     速度も Δv も同じ倍率で伸ばすので三角形は相似のまま。
+     Δv だけ伸ばすと三角形が閉じなくなり、作図として嘘になる。 */
+  function pairZoom() {
+    const W = HG.state.video.width;
+    const n = HG.drawing.counts().n;
+    const vs = [], ds = [];
+    for (let k = 0; k < n - 1; k++) {
+      const v = HG.drawing.velocity(k);
+      if (v) vs.push(Math.hypot(v.dx, v.dy));
+    }
+    for (let k = 0; k < n - 2; k++) {
+      const d = HG.drawing.autoDeltaV(k);
+      if (d) ds.push(Math.hypot(d.dx, d.dy));
+    }
+    if (!vs.length) return 1;
+    vs.sort((a, b) => a - b); ds.sort((a, b) => a - b);
+    const lv = vs[vs.length - 1];
+    const ld = ds.length ? ds[Math.floor(ds.length / 2)] : 0;
+    if (lv < 1e-6) return 1;
+    const wantDv = ld > 1e-6 ? (W * 0.11) / ld : Infinity;
+    const capV = (W * 0.40) / lv;
+    return Math.max(1, Math.min(wantDv, capV));
+  }
+
+  /** いまの組の3点と、拡大済みのベクトル */
+  function pairGeom(k) {
+    const p = pts();
+    const from = p[k], at = p[k + 1];
+    const v0 = HG.drawing.velocity(k), v1 = HG.drawing.velocity(k + 1);
+    if (!from || !at || !v0 || !v1) return null;
+    const z = S.zoom || 1;
+    return {
+      from: from, at: at, z: z,
+      vb: { dx: v0.dx * z, dy: v0.dy * z },      // 前送りする v_k
+      va: { dx: v1.dx * z, dy: v1.dy * z }       // その場にいる v_{k+1}
+    };
+  }
+
+  /** 最後の組かどうか */
+  function lastPair() { return Math.max(0, HG.drawing.counts().n - 3); }
+
+  /**
+   * この組で作図が縮退するか（等速運動。2本の先端が重なる）。
+   *
+   * 判定はジッタではなく**画面上で先端が重なっているか**で行う。
+   * ジッタの見積もりは間隔1コマの二階差分から作られているが、等加速度運動では
+   * その二階差分こそが信号そのものなので、ジッタで判定すると「重なっている」と
+   * 誤判定する（自由落下や、おもりで引いた台車で実際に起きた）。
+   * ここで問いたいのは「生徒がドラッグできるだけの距離が2つの先端のあいだに
+   * あるか」という画面の事実なので、拡大後の長さで見る。
+   */
+  function degenerate(k) {
+    const d = HG.drawing.autoDeltaV(k);
+    if (!d) return false;
+    const z = S.zoom || 1;
+    return Math.hypot(d.dx, d.dy) * z < HG.state.video.width * 0.012;
+  }
   function active() { return S.on; }
 
   /* ---------- スナップ ---------- */
@@ -91,6 +215,26 @@
       S.pending = null;
       done();
       return;
+    }
+
+    /* ③はボタン操作だけ。⑤⑥は見るだけ。キャンバスのタップは拾わない */
+    if (S.step === 3 || S.step >= 5) { S.pending = null; S.ghost = null; return; }
+
+    /* 一次元の等速運動では2本が完全に重なり、先端も一致する。
+       ④のドラッグ距離がゼロになるので、エラーにせずタップで受ける。
+       ゼロベクトルもベクトルである、というのはここでしか教えられない。 */
+    if (S.step === 4 && S.aligned && !p.dragged && degenerate(S.pair)) {
+      const g0 = pairGeom(S.pair);
+      if (g0) {
+        const tip0 = { x: g0.at.x + g0.vb.dx, y: g0.at.y + g0.vb.dy };
+        if (Math.hypot(tip0.x - p.ox, tip0.y - p.oy) <= HG.state.video.width * 0.16) {
+          HG.drawing.putDeltaV(S.pair, HG.drawing.autoDeltaV(S.pair));
+          S.pending = null;
+          hint('先端が重なっています。Δv = 0 です。ゼロベクトルもベクトルです。');
+          settle();
+          return;
+        }
+      }
     }
 
     let from, to;
@@ -133,22 +277,27 @@
     HG.drawing.putVelocity(a.k, { dx: b.x - a.x, dy: b.y - a.y });
   }
 
+  /**
+   * ④はスナップなし。吸着先は「速度ベクトルの先端」になるが、自動で合わせると
+   * 生徒は先端を結ぶという操作の意味を考えずに済んでしまう。ここが本教材で
+   * 観察したい思考の場所。
+   *
+   * 画面上の2本は倍率 z で拡大されているので、引かれた矢印を z で割って
+   * 実寸の Δv に戻す。速度も Δv も同じ倍率なので三角形は相似のまま。
+   */
   function putDeltaV(from, to) {
-    /* ④はスナップなし。どの組の Δv かは、始点がどの先端に近いかで決める */
-    const n = HG.drawing.counts().n;
-    let best = -1, bd = Infinity;
-    for (let k = 0; k < n - 2; k++) {
-      if (!HG.hodo.visible(k) || !HG.hodo.visible(k + 1)) continue;
-      const t = HG.hodo.tip(k);
-      if (!t) continue;
-      const d = Math.hypot(t.x - from.ox, t.y - from.oy);
-      if (d < bd) { bd = d; best = k; }
-    }
-    if (best < 0 || bd > HG.state.video.width * 0.18) {
-      hint('速度ベクトルの先端から、次の速度ベクトルの先端へ引いてください。');
+    const k = S.pair;
+    const g = pairGeom(k);
+    if (!g) return;
+    if (!S.aligned) { hint('先に「始点を揃える」を押してください。'); return; }
+    const tipB = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
+    if (Math.hypot(tipB.x - from.ox, tipB.y - from.oy) > HG.state.video.width * 0.16) {
+      hint('前送りしてきた速度ベクトル（破線）の先端から、もう1本の先端へ引いてください。');
       return;
     }
-    HG.drawing.putDeltaV(best, HG.hodo.toDeltaV(from.ox, from.oy, to.ox, to.oy, best));
+    const z = g.z || 1;
+    HG.drawing.putDeltaV(k, { dx: (to.ox - from.ox) / z, dy: (to.oy - from.oy) / z });
+    settle();
   }
 
   /* ---------- ステップ進行 ---------- */
@@ -158,9 +307,10 @@
     const c = HG.drawing.counts();
     if (step === 1) return !!HG.state.drawing.origin && c.pos >= c.posNeed && c.posNeed > 0;
     if (step === 2) return c.vel >= c.velNeed && c.velNeed > 0;
-    if (step === 3) return S.step > 3;
+    if (step === 3) return S.step > 3 || S.aligned;
     if (step === 4) return c.dv >= c.dvNeed && c.dvNeed > 0;
-    if (step === 5) return S.checked;
+    if (step === 5) return S.step >= 5;
+    if (step === 6) return S.checked;
     return false;
   }
 
@@ -180,7 +330,9 @@
       HG.drawing.fillPositions();
     } else if (step === 2) {
       HG.drawing.fillVelocities();
-    } else if (step >= 4) {
+    } else if (step >= 5) {
+      /* ⑤以降へ直接跳んだときだけ、残りをまとめて埋める。
+         ③④を順に通る場合は組ごとに埋めるので、ここは通らない。 */
       for (let k = 0; k < p.length - 2; k++) {
         if (!HG.state.drawing.deltaVVectors[k]) {
           HG.drawing.putDeltaV(k, HG.drawing.autoDeltaV(k));
@@ -206,40 +358,66 @@
   }
 
   function goto(step) {
-    const from = S.step;
     S.step = step;
     S.pending = null;
-    S.flying = -1;
+    S.slide = -1;
+    S.settle = -1;
     if (S.auto) autoFill(step);
-    S.fade = (step === 4 || step === 5) ? 0.86 : 0;
 
-    /* 別枠（④⑤）は抽象的な図なので、軌道に合わせたクロップの中に描くと
-       横幅が足りない（一次元運動では特に）。別枠のあいだだけ全体表示に戻し、
-       軌道に戻る⑥でクロップを復元する。 */
-    if (step === 4 || step === 5) {
-      if (HG.view.crop && !S.savedCrop) S.savedCrop = HG.view.crop;
-      HG.coords.setCrop(null);
-    } else if (S.savedCrop) {
-      HG.coords.setCrop(S.savedCrop);
-      S.savedCrop = null;
+    /* ③④は一組だけに注目させるので、ストロボをわずかに落として矢印を立たせる。
+       ⑤⑥は軌道そのものを見せたいので落とさない。 */
+    S.fade = (step === 3 || step === 4) ? 0.35 : 0;
+
+    if (step === 3) {
+      /* 組送りの開始。倍率は全組で共通にする（組ごとに変えると図が跳ねる） */
+      S.zoom = pairZoom();
+      if (!S.aligned) S.slide = -1;
     }
+    if (step >= 5) { S.aligned = false; S.slide = -1; }
+
     if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
     HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
     updateUI();
     updateReveal();
     HG.stage.render();
-    /* 別枠から軌道へ移るときだけ、矢印を滑らせる */
-    if (step === 6 && (from === 4 || from === 5)) flyBack();
   }
 
-  /* ---------- ③ 集める（必ずアニメーションさせる） ---------- */
+  /* ---------- 発展：別枠（ホドグラフ）の出し入れ ----------
+     本筋ではない。⑤まで到達した生徒に追加で見せる。
+     別枠は抽象的な図なので、軌道に合わせたクロップの中に描くと横幅が
+     足りない（一次元運動では特に）。別枠のあいだだけ全体表示に戻す。 */
+  function setAdvanced(on) {
+    S.advanced = !!on;
+    if (S.advanced) {
+      if (HG.view.crop && !S.savedCrop) S.savedCrop = HG.view.crop;
+      HG.coords.setCrop(null);
+      S.fade = 0.86;
+    } else {
+      if (S.savedCrop) { HG.coords.setCrop(S.savedCrop); S.savedCrop = null; }
+      S.fade = 0;
+      flyBack();
+    }
+    if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
+    updateUI();
+    HG.stage.render();
+  }
+
+  /* ---------- ③④ 組送り（必ずアニメーションさせる） ---------- */
   /** 自動モードの「次へ」。手書きと同じ道を通る */
   function autoNext() {
     if (S.step === 1) goto(2);
-    else if (S.step === 2) collect();          // ③
-    else if (S.step === 4) check();            // ⑤
-    else if (S.step === 5) goto(6);
-    else if (S.step === 3) collect();
+    else if (S.step === 2) goto(3);
+    else if (S.step === 3) align();
+    else if (S.step === 4) autoDeltaHere();
+    else if (S.step === 5) check();            // ⑥
+  }
+
+  /** ④を自動で埋める（手描きと同じ置き直しアニメーションを通す） */
+  function autoDeltaHere() {
+    const v = HG.drawing.autoDeltaV(S.pair);
+    if (!v) { goto(5); return; }
+    HG.drawing.putDeltaV(S.pair, v);
+    settle();
   }
 
   /**
@@ -252,33 +430,102 @@
    */
   function runToEnd() {
     S.runAll = true;
-    let guard = 40;
+    /* 組ごとに③④を通るので、回数は点の数で決まる */
+    let guard = 12 + 4 * HG.drawing.counts().n;
     (function drive() {
       if (!S.on || !S.runAll) { S.runAll = false; return; }
       if (S.step >= 6) { S.runAll = false; updateUI(); return; }
       /* アニメーション中は待つ（途中で割り込むと矢印が飛ぶ）。
          ここで空回りするあいだは guard を減らさない。減らしてしまうと
-         ③の1秒のアニメーションだけで回数を使い切り、④で止まる。 */
-      if (S.collecting || S.flying >= 0) { requestAnimationFrame(drive); return; }
+         アニメーションだけで回数を使い切り、途中で止まる。 */
+      if (S.slide >= 0 || S.settle >= 0 || S.flying >= 0) { requestAnimationFrame(drive); return; }
       if (guard-- <= 0) { S.runAll = false; updateUI(); return; }
       autoNext();
-      setTimeout(drive, 80);
+      setTimeout(drive, 60);
     })();
   }
 
-  function collect() {
-    /* 矢印がスーッと滑って原点に集まる1秒間の動きが、
-       「ベクトルは平行移動しても同じもの」という自由ベクトルの概念
-       そのものを見せる。パッと切り替わると別物が現れたようにしか見えない。 */
-    S.step = 3; S.collecting = true; S.t = 0;
+  /**
+   * ③ v_k だけを r_k → r_{k+1} へ前送りして、2本の始点を揃える。
+   *
+   * v_{k+1} の始点はもともと r_{k+1} にある。動かすのは v_k だけ。
+   * 2本とも動かす実装にしないこと。1本だけが動くことで「隣の速度ベクトルを
+   * こっちへ持ってきて比べる」という意図が読める。
+   *
+   * 必ずアニメーションさせる。「同じ矢印をこっちへ持ってきた」という動きが、
+   * ベクトルは平行移動しても同じもの、という自由ベクトルの概念そのものを
+   * 見せる。パッと切り替わると別物が現れたようにしか見えない。
+   */
+  function align(fast) {
+    if (!pairGeom(S.pair)) { goto(5); return; }
+    S.step = 3; S.aligned = false; S.slide = 0;
+    if (!S.zoom || S.zoom === 1) S.zoom = pairZoom();
+    const dur = fast ? 170 : 380;
     const t0 = performance.now();
     updateUI();
     (function tick() {
-      S.t = Math.min(1, (performance.now() - t0) / 1000);
-      S.fade = 0.86 * S.t;
+      S.slide = Math.min(1, (performance.now() - t0) / dur);
       HG.stage.render();
-      if (S.t < 1) requestAnimationFrame(tick);
-      else { S.collecting = false; goto(4); }
+      if (S.slide < 1) requestAnimationFrame(tick);
+      else {
+        S.slide = -1; S.aligned = true; S.step = 4;
+        updateUI(); HG.stage.render();
+      }
+    })();
+  }
+
+  /**
+   * ④で描いた Δv を、共通始点 r_{k+1} へ平行移動する。
+   * 作図した直後の Δv の始点は v_k の先端なので、この置き直しが1回だけ要る。
+   * 移動先は目の前の共通始点なので、三角形の一辺を頂点へ持ち帰るだけの
+   * 自明な動きになる。置いたら速度2本を消して、次の組へ。
+   */
+  function settle(fast) {
+    S.ghost = null; S.pending = null;
+    S.settle = 0;
+    const dur = fast ? 150 : 320;
+    const t0 = performance.now();
+    updateUI();
+    (function tick() {
+      S.settle = Math.min(1, (performance.now() - t0) / dur);
+      HG.stage.render();
+      if (S.settle < 1) requestAnimationFrame(tick);
+      else { S.settle = -1; nextPair(); }
+    })();
+  }
+
+  /** k を1つ進めて③へ戻る。最後まで行ったら⑤へ */
+  function nextPair() {
+    if (S.pair >= lastPair()) { goto(5); return; }
+    S.pair++;
+    S.aligned = false; S.slide = -1;
+    S.step = 3;
+    updateUI();
+    HG.stage.render();
+  }
+
+  /**
+   * ③④の「残りを自動で」。
+   * 手描きは最初の1〜2組だけでよい。残りは同じアニメーションを高速で流す。
+   * 生徒が自分でやった操作がそのまま速回しで続く、という連続性が大事なので、
+   * 自動分だけ演出を変えない（一括表示にしない、アニメーションを省かない）。
+   */
+  function runRest() {
+    S.runAll = true;
+    let guard = 8 + 4 * HG.drawing.counts().n;
+    (function drive() {
+      if (!S.on || !S.runAll) { S.runAll = false; return; }
+      if (S.step >= 5) { S.runAll = false; updateUI(); return; }
+      if (S.slide >= 0 || S.settle >= 0) { requestAnimationFrame(drive); return; }
+      if (guard-- <= 0) { S.runAll = false; updateUI(); return; }
+      if (S.step === 3) align(true);
+      else if (S.step === 4) {
+        const v = HG.drawing.autoDeltaV(S.pair);
+        if (!v) { S.runAll = false; goto(5); return; }
+        HG.drawing.putDeltaV(S.pair, v);
+        settle(true);
+      }
+      setTimeout(drive, 40);
     })();
   }
 
@@ -293,22 +540,125 @@
 
   function paint(ctx) {
     if (!S.on) return;
-    if (S.collecting) { paintCollect(ctx); return; }
+    if (S.advanced) { paintHodo(ctx); paintGhost(ctx); return; }
     if (S.step === 0) { paintGhost(ctx); return; }
-    if (S.step === 1 || S.step === 2 || S.step === 6) paintTrack(ctx);
-    if (S.step === 4 || S.step === 5) paintHodo(ctx);
+    if (S.step === 3 || S.step === 4) { paintPair(ctx); paintGhost(ctx); return; }
+    paintTrack(ctx);
     paintGhost(ctx);
+  }
+
+  /* ---------- ③④ 組ごとの作図（本筋） ----------
+     注目中の組以外はすべて減光する。画面上の濃い矢印は常に2本だけ。
+     これが逐次方式の生命線。画面が混むと「今どの点の作業なのか」が
+     分からなくなり、別枠方式で起きていた問題がそのまま戻ってくる。 */
+  function paintPair(ctx) {
+    const p = pts(), d = HG.state.drawing, k = S.pair;
+    const o = d.origin;
+    const z = S.zoom || 1;
+    const ease = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+
+    if (o) {
+      d.positionVectors.forEach(v => {
+        if (!v) return;
+        const a = C(o.x, o.y), b = C(o.x + v.dx, o.y + v.dy);
+        HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
+          { color: COLORS.pos, width: 1, head: 4, alpha: 0.13 });
+      });
+    }
+    d.velocityVectors.forEach((v, i) => {
+      if (!v || !p[i] || i === k || i === k + 1) return;
+      const a = C(p[i].x, p[i].y), b = C(p[i].x + v.dx, p[i].y + v.dy);
+      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
+        { color: COLORS.vel, width: 1.5, head: 6, alpha: 0.18 });
+    });
+
+    /* すでに置いた Δv を積み上げて見せる。1本ずつ増えていくのが分かる */
+    d.deltaVVectors.forEach((v, i) => {
+      if (!v || i >= k) return;
+      const at = p[HG.drawing.posIndexOfDeltaV(i)];
+      if (!at) return;
+      const a = C(at.x, at.y), b = C(at.x + v.dx * z, at.y + v.dy * z);
+      if (Math.hypot(v.dx, v.dy) * z < 1) { HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv }); return; }
+      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
+        { color: COLORS.dv, width: 2, head: 8, alpha: 0.38 });
+    });
+
+    const g = pairGeom(k);
+    if (!g) return;
+    const flat = is1D();
+    const A = C(g.at.x, g.at.y);
+
+    /* r_{k+1} の丸ハイライトと「k → k+1」のラベル */
+    ctx.save();
+    ctx.strokeStyle = 'rgba(11,107,203,.85)';
+    ctx.lineWidth = 2.5 * HG.view.dpr;
+    ctx.beginPath(); ctx.arc(A.x, A.y, 13 * HG.view.dpr, 0, Math.PI * 2); ctx.stroke();
+    ctx.font = (12 * HG.view.dpr) + 'px ui-monospace,monospace';
+    ctx.lineWidth = 3 * HG.view.dpr;
+    ctx.strokeStyle = 'rgba(255,255,255,.92)';
+    ctx.fillStyle = '#0b6bcb';
+    const lab = k + ' → ' + (k + 1);
+    ctx.strokeText(lab, A.x + 16 * HG.view.dpr, A.y - 12 * HG.view.dpr);
+    ctx.fillText(lab, A.x + 16 * HG.view.dpr, A.y - 12 * HG.view.dpr);
+    ctx.restore();
+
+    /* v_{k+1}：はじめから r_{k+1} にいる。動かさない */
+    const Ta = C(g.at.x + g.va.dx, g.at.y + g.va.dy);
+    HG.arrows.draw(ctx, A.x, A.y, Ta.x, Ta.y,
+      { color: COLORS.vel, width: flat ? 2.5 : 3, head: 10 });
+
+    /* v_k：r_k から r_{k+1} へ前送り。動くのはこの1本だけ。
+       2本とも動かす実装にしないこと。 */
+    const t = S.slide >= 0 ? ease(S.slide) : (S.aligned ? 1 : 0);
+    const tail = { x: g.from.x + (g.at.x - g.from.x) * t,
+                   y: g.from.y + (g.at.y - g.from.y) * t };
+    if (t > 0.02) {
+      const F = C(g.from.x, g.from.y), Fb = C(g.from.x + g.vb.dx, g.from.y + g.vb.dy);
+      HG.arrows.draw(ctx, F.x, F.y, Fb.x, Fb.y,
+        { color: COLORS.vel, width: 2, head: 7, alpha: 0.24 });
+    }
+    const Pb = C(tail.x, tail.y), Tb = C(tail.x + g.vb.dx, tail.y + g.vb.dy);
+    /* 一次元では2本が同一直線に乗って1本に見える。下敷き（太く淡く）と
+       上乗せ（細く濃く）で描き分ける。**平行にずらして逃げないこと。**
+       ずらすと Δv が斜めになり、作図として嘘になる。 */
+    HG.arrows.draw(ctx, Pb.x, Pb.y, Tb.x, Tb.y,
+      flat ? { color: COLORS.vel, width: 7, head: 13, alpha: 0.28 }
+           : { color: COLORS.vel, width: 2, head: 8, dash: true, alpha: 0.9 });
+
+    if (!S.aligned && S.slide < 0) return;
+
+    const dv0 = d.deltaVVectors[k];
+    if (dv0) {
+      /* 描けた Δv を共通始点 r_{k+1} へ持ち帰る（三角形の一辺を頂点へ） */
+      const dv = { dx: dv0.dx * g.z, dy: dv0.dy * g.z };
+      const s = S.settle >= 0 ? ease(S.settle) : 1;
+      const from0 = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
+      const tl = { x: from0.x + (g.at.x - from0.x) * s,
+                   y: from0.y + (g.at.y - from0.y) * s };
+      const a = C(tl.x, tl.y), b = C(tl.x + dv.dx, tl.y + dv.dy);
+      if (Math.hypot(dv.dx, dv.dy) < 1) HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv });
+      else HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.dv, width: 3.5, head: 11 });
+    } else if (S.step === 4) {
+      /* どこから引くかだけ示す。引く先は生徒が自分で合わせる（磁石なし） */
+      ctx.save();
+      ctx.fillStyle = 'rgba(255,122,0,.9)';
+      ctx.beginPath(); ctx.arc(Tb.x, Tb.y, 5 * HG.view.dpr, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    if (S.step === 4) paintMini(ctx, k);
   }
 
   /* ①②⑥：ストロボ画像の上 */
   function paintTrack(ctx) {
     const o = HG.state.drawing.origin;
     const d = HG.state.drawing;
-    const six = (S.step === 6);
-    /* ⑥ではレイヤーで選ぶ。①②を全部残すと矢印だらけで Δv が読めないが、
+    const fin = (S.step >= 5);
+    const five = (S.step === 5);
+    /* ⑤は Δv だけを残す（到達点）。位置も速度も補助線も消す。
+       ⑥ではレイヤーで選ぶ。①②を全部残すと矢印だらけで Δv が読めないが、
        速度を消すと Δv が宙に浮いて見える。既定は「速度＋Δv」。 */
-    const showPos = six ? (L.pos && S.focus < 0) : true;
-    const showVel = six ? (L.vel && S.focus < 0) : (S.step >= 2);
+    const showPos = fin ? (!five && L.pos && S.focus < 0) : true;
+    const showVel = fin ? (!five && L.vel && S.focus < 0) : (S.step >= 2);
 
     if (o && showPos) {
       const c = C(o.x, o.y);
@@ -339,9 +689,30 @@
       });
     }
 
-    if (six) {
-      if (L.pred) paintPrediction(ctx, 'track');
-      if (L.dv) paintBackDraw(ctx);
+    if (fin) {
+      if (!five && L.pred) paintPrediction(ctx, 'track');
+      if (five || L.dv) paintBackDraw(ctx);
+      if (S.step === 6 && S.focus < 0) paintAutoOnTrack(ctx);
+    }
+  }
+
+  /**
+   * ⑥ 答え合わせ。自動算出した Δv を軌道の上に重ねる。別枠で比較しない。
+   * ズレて見えること自体が議論の材料になる。
+   */
+  function paintAutoOnTrack(ctx) {
+    const p = pts(), n = HG.drawing.counts().n;
+    const k = backScale();
+    if (k <= 0) return;
+    const off = listOffset();
+    for (let i = 0; i < n - 2; i++) {
+      const ref = HG.drawing.autoDeltaV(i);
+      const at = p[HG.drawing.posIndexOfDeltaV(i)];
+      if (!ref || !at) continue;
+      const a = C(at.x + off.x, at.y + off.y);
+      const b = C(at.x + off.x + ref.dx * k, at.y + off.y + ref.dy * k);
+      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
+        { color: COLORS.auto, width: 2, head: 9, dash: true, alpha: 0.95 });
     }
   }
 
@@ -479,12 +850,14 @@
     /* 等速運動では Δv がゼロになる。矢印が消えて何も表示されないのを避け、
        点と文字で明示する。ゼロベクトルもベクトルである、というのは
        ここでしか教えられない。 */
+    const off = listOffset();
     const j = HG.selection.current().jitter;
     if (med < 3 * j) {
       d.deltaVVectors.forEach((v, i) => {
         if (!v) return;
-        const at = p[HG.drawing.posIndexOfDeltaV(i)];
-        if (!at) return;
+        const at0 = p[HG.drawing.posIndexOfDeltaV(i)];
+        if (!at0) return;
+        const at = { x: at0.x + off.x, y: at0.y + off.y };
         const c = C(at.x, at.y);
         const r = 9 * HG.view.dpr;
         ctx.save();
@@ -519,8 +892,11 @@
 
     d.deltaVVectors.forEach((v, i) => {
       if (!v) return;
-      const at = p[HG.drawing.posIndexOfDeltaV(i)];   // 半コマずれ：r_i ではなく r_{i+1}
-      if (!at) return;
+      const at0 = p[HG.drawing.posIndexOfDeltaV(i)];  // 半コマずれ：r_i ではなく r_{i+1}
+      if (!at0) return;
+      /* 一次元では Δv が黒点の列と同じ直線に並んで読めない。
+         ⑤⑥の一覧に限り、軌道と垂直にずらして並べる（作図ではないので嘘にならない） */
+      const at = { x: at0.x + off.x, y: at0.y + off.y };
       let tail = at, sc = k;
       if (fly >= 0) {
         /* 別枠で Δv が始まっていた場所（速度ベクトルの先端）から、
@@ -550,23 +926,7 @@
     })();
   }
 
-  /* ③ アニメーション：矢印が滑って原点に集まる */
-  function paintCollect(ctx) {
-    const p = pts(), t = S.t, n = HG.drawing.counts().n;
-    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-    const s1 = HG.hodo.scale();
-    for (let k = 0; k < n - 1; k++) {
-      const v = HG.drawing.velocity(k);
-      if (!v || !p[k]) continue;
-      const o = HG.hodo.originFor(k);
-      const tail = { x: p[k].x + (o.x - p[k].x) * ease, y: p[k].y + (o.y - p[k].y) * ease };
-      const sc = 1 + (s1 - 1) * ease;
-      const a = C(tail.x, tail.y), b = C(tail.x + v.dx * sc, tail.y + v.dy * sc);
-      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.vel, width: 3, head: 10 });
-    }
-  }
-
-  /* ④⑤：別枠（ホドグラフ） */
+  /* 発展：別枠（ホドグラフ） */
   function paintHodo(ctx) {
     HG.hodo.drawAxes(ctx);
     const n = HG.drawing.counts().n;
@@ -624,9 +984,8 @@
       }
     });
 
-    /* ⑤ 答え合わせ：自動算出を重ねて表示する。別画面にしない。
-       ズレて見えること自体が議論の材料になる */
-    if (S.step === 5) {
+    /* ⑥まで来ていれば、別枠でも自動算出を重ねる */
+    if (S.step >= 6) {
       for (let k = 0; k < n - 2; k++) {
         if (!HG.hodo.visible(k) || !HG.hodo.visible(k + 1)) continue;
         const ref = HG.drawing.autoDeltaV(k);
@@ -638,8 +997,6 @@
       }
       paintPrediction(ctx, 'hodo');
     }
-
-    if (S.step === 4) paintMini(ctx);
   }
 
   /**
@@ -696,8 +1053,12 @@
    * 並べて置くと、「位置→速度」でやったことを一段上げると「速度→加速度」に
    * なる、と生徒が自分で気づける。微分の階層構造がここで入る。
    */
-  function paintMini(ctx) {
-    const p = pts(), o = HG.state.drawing.origin;
+  function paintMini(ctx, only) {
+    const all = pts(), o = HG.state.drawing.origin;
+    /* ③④で扱っている組は常に r_k r_{k+1} r_{k+2} の3点。
+       ミニ図にもその3点ぶんだけを描く（全コマ分を描くと対応が読めない）。
+       上の段と下の段で、同じ3点に同じ操作をしていることが一目で分かる。 */
+    const p = (typeof only === 'number') ? all.slice(only, only + 3) : all;
     if (!o || p.length < 2) return;
     const cw = HG.stage.canvas().width, ch = HG.stage.canvas().height;
     const box = Math.min(cw, ch) * 0.30;
@@ -750,10 +1111,10 @@
   const STEPS = [
     { id: 1, label: '① 位置', hint: '基準点をタップしてください。そこから各コマの黒点へ矢印を引きます。' },
     { id: 2, label: '② 速度', hint: '隣り合う位置ベクトルの先端どうし（＝隣の黒点どうし）を結んでください。これが速度ベクトルです。' },
-    { id: 3, label: '③ 集める', hint: '「集める」を押すと、②で描いた速度ベクトルが共通の始点へ集まります。' },
-    { id: 4, label: '④ Δv', hint: '隣り合う速度ベクトルの先端どうしを結んでください。これが Δv（加速度の向き）です。ここは磁石が効きません。' },
-    { id: 5, label: '⑤ 答え合わせ', hint: '自動算出した Δv（紫の破線）を重ねました。ズレの理由を考えてみてください。' },
-    { id: 6, label: '⑥ 描き戻す', hint: 'Δv を、対応するコマの黒点を始点にして軌道上へ描き戻しました。' }
+    { id: 3, label: '③ 始点を揃える', hint: '「始点を揃える」を押すと、前の速度ベクトルが次の点まで前送りされ、2本の始点が揃います。動くのは1本だけです。' },
+    { id: 4, label: '④ Δv', hint: '揃えた2本の先端どうしを結んでください。これが Δv（加速度の向き）です。ここは磁石が効きません。' },
+    { id: 5, label: '⑤ Δv だけ', hint: '速度ベクトルを消して、軌道の上の Δv だけを残しました。向きの傾向を見てください。' },
+    { id: 6, label: '⑥ 答え合わせ', hint: '自動算出した Δv（紫の破線）を軌道の上に重ねました。ズレの理由を考えてみてください。' }
   ];
 
   function updateUI() {
@@ -774,7 +1135,13 @@
       let extra = '';
       if (S.step === 1 && HG.state.drawing.origin) extra = '（' + c.pos + ' / ' + c.posNeed + ' 本）';
       if (S.step === 2) extra = '（' + c.vel + ' / ' + c.velNeed + ' 本）';
-      if (S.step === 4) extra = '（' + c.dv + ' / ' + c.dvNeed + ' 本）';
+      /* 組送りの現在地を常時表示する。いま何組目かが分からないと逐次の意味がない */
+      if (S.step === 3 || S.step === 4) {
+        extra = '（' + (S.pair + 1) + ' / ' + (lastPair() + 1) + ' 組）';
+        if (S.step === 4 && degenerate(S.pair)) {
+          extra += '　※2本が重なっています。先端をタップすると Δv = 0 として進めます。';
+        }
+      }
       hint(st.hint + extra);
     }
 
@@ -783,18 +1150,25 @@
     show('#drawActions', S.on);
     show('#autoNext', S.on && S.auto && S.step < 6);
     show('#drawModeRow', !S.on);
+    HG.dom.text('#advBtn', S.advanced ? '軌道へ戻る' : '発展：ホドグラフ');
     updateAutoPanel();
     if (S.auto) {
       /* 自動モードでは作図の操作は出さない。表示するだけ */
-      ['#fillRest', '#nextStep', '#collectBtn', '#checkBtn', '#backdrawBtn', '#drawUndo']
+      ['#fillRest', '#restPairs', '#nextStep', '#collectBtn', '#checkBtn', '#drawUndo']
         .forEach(x => show(x, false));
-      const st = STEPS[S.step - 1];
-      if (st) hint((S.step === 3 ? '速度ベクトルを共通の始点へ集めています…' : st.hint.replace(/してください。?/g, 'しています。')));
-      show('#hodoRow', S.step >= 4 && S.step !== 6);
-      show('#pairRow', S.step >= 4 && S.step !== 6 && HG.hodo.state.mode === 'pair');
-      show('#gapRow', S.step >= 4 && S.step !== 6 && HG.hodo.state.mode === 'stair');
-      show('#layerRow', S.step === 6);
-      show('#focusRow', S.step === 6 && S.focus >= 0);
+      const sa = STEPS[S.step - 1];
+      if (sa) {
+        let msg = (S.step === 3 ? '速度ベクトルの始点を揃えています…'
+                                : sa.hint.replace(/してください。?/g, 'しています。'));
+        if (S.step === 3 || S.step === 4) msg += '（' + (S.pair + 1) + ' / ' + (lastPair() + 1) + ' 組）';
+        hint(msg);
+      }
+      show('#advBtn', S.step >= 5);
+      show('#hodoRow', S.advanced);
+      show('#pairRow', S.advanced && HG.hodo.state.mode === 'pair');
+      show('#gapRow', S.advanced && HG.hodo.state.mode === 'stair');
+      show('#layerRow', S.step === 6 && !S.advanced);
+      show('#focusRow', S.step === 6 && !S.advanced && S.focus >= 0);
       if (S.step === 6) updateScaleNote();
       show('#drawReset', true);
       show('#drawExit', true);
@@ -802,16 +1176,18 @@
     }
     show('#fillRest', S.on && (S.step === 1 || S.step === 2) &&
          (S.step === 1 ? (HG.state.drawing.origin && c.pos >= Math.min(3, c.posNeed)) : c.vel >= Math.min(3, c.velNeed)));
+    /* 手描きは最初の1〜2組だけでよい。2組目からは「残りの組を自動で」を出す */
+    show('#restPairs', S.on && (S.step === 3 || S.step === 4) && S.pair >= 1 && S.pair < lastPair());
     show('#nextStep', S.on && S.step <= 2 && complete(S.step));
     show('#collectBtn', S.on && S.step === 3);
-    show('#checkBtn', S.on && S.step === 4 && complete(4));
-    show('#backdrawBtn', S.on && S.step === 5);
-    show('#hodoRow', S.on && S.step >= 4 && S.step !== 6);
-    show('#layerRow', S.on && S.step === 6);
-    show('#focusRow', S.on && S.step === 6 && S.focus >= 0);
+    show('#checkBtn', S.on && S.step === 5);
+    show('#advBtn', S.on && S.step >= 5);
+    show('#hodoRow', S.on && S.advanced);
+    show('#layerRow', S.on && S.step === 6 && !S.advanced);
+    show('#focusRow', S.on && S.step === 6 && !S.advanced && S.focus >= 0);
     if (S.step === 6) updateScaleNote();
-    show('#pairRow', S.on && S.step >= 4 && HG.hodo.state.mode === 'pair');
-    show('#gapRow', S.on && S.step >= 4 && S.step !== 6 && HG.hodo.state.mode === 'stair');
+    show('#pairRow', S.on && S.advanced && HG.hodo.state.mode === 'pair');
+    show('#gapRow', S.on && S.advanced && HG.hodo.state.mode === 'stair');
     show('#drawUndo', S.on && (S.step === 1 || S.step === 2 || S.step === 4));
     show('#drawReset', S.on);
     show('#drawExit', S.on);
@@ -874,6 +1250,8 @@
     }
     if (HG.drawing.counts().n < 3) { alert('座標のあるコマが3点以上必要です。'); return; }
     S.on = true; S.checked = false;
+    S.pair = 0; S.aligned = false; S.slide = -1; S.settle = -1;
+    S.advanced = false; S.zoom = 1; S.focus = -1;
     S.auto = ($('#drawMode').value === 'auto');
     document.body.classList.add('drawing');   // 作図中は他のカードを畳む
     const pred = HG.state.drawing.prediction;
@@ -982,12 +1360,14 @@
           '（最大のずれ ' + worst.toFixed(0) + '°）</div>' + note + rows.join('<br>')
         : '判定できませんでした。') + (pred ? '<div class="spaced">' + pred + '</div>' : ''));
     }
-    goto(5);
+    goto(6);
   }
 
   function undo() {
     const d = HG.state.drawing;
-    const arr = S.step === 1 ? d.positionVectors : S.step === 2 ? d.velocityVectors : d.deltaVVectors;
+    /* ④はいま扱っている組だけを消す。組送りなので「最後の1本」では合わない */
+    if (S.step === 4) { d.deltaVVectors[S.pair] = undefined; done(); return; }
+    const arr = S.step === 1 ? d.positionVectors : d.velocityVectors;
     for (let i = arr.length - 1; i >= 0; i--) {
       if (arr[i]) { arr[i] = undefined; break; }
     }
@@ -1066,7 +1446,11 @@
 
   function attach() {
     $('#startDraw').onclick = start;
-    $('#drawReset').onclick = () => { HG.drawing.reset(); S.checked = false; goto(1); };
+    $('#drawReset').onclick = () => {
+      HG.drawing.reset();
+      S.checked = false; S.pair = 0; S.aligned = false; S.advanced = false; S.zoom = 1;
+      goto(1);
+    };
     $('#drawUndo').onclick = undo;
     $('#drawExit').onclick = stop;
     $('#autoNext').onclick = autoNext;
@@ -1079,10 +1463,14 @@
     HG.bus.on('points:changed', updateAutoPanel);
     HG.bus.on('quality:changed', updateAutoPanel);
     updateAutoPanel();
-    $('#nextStep').onclick = () => goto(S.step + 1);
-    $('#collectBtn').onclick = collect;
+    $('#nextStep').onclick = () => {
+      if (S.step === 2) { S.pair = 0; S.aligned = false; }
+      goto(S.step + 1);
+    };
+    $('#collectBtn').onclick = () => align();
+    $('#restPairs').onclick = runRest;
     $('#checkBtn').onclick = check;
-    $('#backdrawBtn').onclick = () => goto(6);
+    $('#advBtn').onclick = () => setAdvanced(!S.advanced);
     $('#fillRest').onclick = () => {
       if (S.step === 1) HG.drawing.fillPositions();
       else HG.drawing.fillVelocities();
@@ -1092,7 +1480,10 @@
       const el = e.target.closest('[data-step]');
       if (!el || !S.on) return;
       const to = +el.dataset.step;
-      if (to < S.step) goto(to);              // 前のステップへは自由に戻れる
+      if (to >= S.step) return;               // 前のステップへは自由に戻れる
+      if (S.advanced) setAdvanced(false);
+      if (to === 3) { S.pair = 0; S.aligned = false; }
+      goto(to);
     };
     $('#hodoMode').onchange = e => { HG.hodo.setMode(e.target.value); done(); };
     $('#pairSlider').oninput = e => { HG.hodo.setPair(+e.target.value); done(); };
