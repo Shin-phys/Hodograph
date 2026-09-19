@@ -36,6 +36,8 @@
     let ly = cssY - D / 2 - 42;          // 指の少し上に出す
     if (ly < 4) ly = cssY + 24;          // 上端では下に逃がす
     lx = Math.max(2, Math.min(host.width - D / 2 - 2, lx));
+    /* 下端でも枠からはみ出さないようにする */
+    if (host.height) ly = Math.max(2, Math.min(host.height - D / 2 - 2, ly));
     el.style.left = lx + 'px';
     el.style.top = ly + 'px';
 
@@ -46,8 +48,19 @@
     ctx.clip();
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, D, D);
+    /* 取り込む範囲がキャンバスの外へ出たら、出たぶんだけ描く先もずらす。
+       範囲をそのまま drawImage へ渡すと、ブラウザが元と先を比例して切るため、
+       拡大像が円の中で片側へ寄り、たとえば画面の下側を触ったときにルーペの
+       下半分が空になる（実機で指摘された）。
+       こうしておけば、中心の十字は常に指している点そのものを指す。 */
     const s = D / ZOOM;
-    ctx.drawImage(cv, p.cx - s / 2, p.cy - s / 2, s, s, 0, 0, D, D);
+    const sx = p.cx - s / 2, sy = p.cy - s / 2;
+    const ax = Math.max(0, sx), ay = Math.max(0, sy);
+    const bx = Math.min(cv.width, sx + s), by = Math.min(cv.height, sy + s);
+    if (bx > ax && by > ay) {
+      ctx.drawImage(cv, ax, ay, bx - ax, by - ay,
+        (ax - sx) * ZOOM, (ay - sy) * ZOOM, (bx - ax) * ZOOM, (by - ay) * ZOOM);
+    }
     ctx.strokeStyle = 'rgba(255,255,255,.9)';
     ctx.lineWidth = 2;
     ctx.beginPath();

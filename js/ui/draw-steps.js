@@ -59,7 +59,8 @@
     flying: -1,         // 発展から軌道へ戻るアニメーション（0..1、-1 で停止）
     handle: null,       // ④で調整中の Δv の先端（元解像度座標）。null なら未着手
     fastAnim: false,    // 移動アニメを速くする（localStorage に覚える）
-    grow: -1,           // ④→⑤で Δv が表示倍率まで伸びる（0..1、-1 で停止）
+    dvScale: 1,         // ⑤⑥と発展で共通の Δv の表示倍率（既定は実寸）
+    collecting: false,  // 発展へ入るときの「集まる」アニメーション中
     holding: false,     // 着地した Δv を見せる間を取っている最中
     handleMoved: false, // ④でハンドルに一度でも触れたか
     trackCrop: null,    // ③④のあいだ預かっておく、軌道に合わせたクロップ
@@ -450,27 +451,20 @@
     /* ④は短い調整の連続なので、拡大鏡は長押しを待たずに出す */
     if (HG.pointer.setEagerLoupe) HG.pointer.setEagerLoupe(step === 4);
 
+    /* ⑤に入ったときの既定は「Δv だけ」。ただしレイヤーの切り替えは出したまま
+       にして、速度ベクトルを戻せるようにする（消しっぱなしにしない）。 */
+    if (step === 5 && from === 4) {
+      L.pos = false; L.vel = false; L.dv = true; L.pred = false;
+      ['pos', 'vel', 'dv', 'pred'].forEach(key => {
+        const el = $('#ly' + key.charAt(0).toUpperCase() + key.slice(1));
+        if (el) el.checked = L[key];
+      });
+    }
     if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
     HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
     updateUI();
     updateReveal();
     HG.stage.render();
-    /* ③④は実寸、⑤は比較のための拡大。黙って大きくなると別物に見えるので、
-       伸びるところを見せる。 */
-    if (step === 5 && from === 4) growDeltaV();
-  }
-
-  /** ⑤に入ったとき、Δv が実寸から表示倍率まで伸びるのを見せる */
-  function growDeltaV() {
-    if (backScale() <= 1) return;
-    S.grow = 0;
-    const t0 = performance.now();
-    (function tick() {
-      S.grow = Math.min(1, (performance.now() - t0) / (S.fastAnim ? 220 : 500));
-      HG.stage.render();
-      if (S.grow < 1) requestAnimationFrame(tick);
-      else { S.grow = -1; HG.stage.render(); }
-    })();
   }
 
   /* ---------- 発展：別枠（ホドグラフ）の出し入れ ----------
@@ -478,12 +472,19 @@
      別枠は抽象的な図なので、軌道に合わせたクロップの中に描くと横幅が
      足りない（一次元運動では特に）。別枠のあいだだけ全体表示に戻す。 */
   function setAdvanced(on) {
-    S.advanced = !!on;
-    if (S.advanced) {
+    if (on) {
+      /* **集まる動きを省かないこと。** ③で軌道の上でやった「始点を揃える」を、
+         今度は全部まとめてやるのがホドグラフ。一点に集まる1秒が無いと、
+         別枠は「どこから来たのか分からない抽象図」に戻ってしまう。
+         ①②と③④が同じ操作だという構造の繰り返しが、ここでもう一段効く。 */
       if (HG.view.crop && !S.savedCrop) S.savedCrop = HG.view.crop;
       HG.coords.setCrop(null);
-      S.fade = 0.86;
-    } else {
+      if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
+      collectToHodo();
+      return;
+    }
+    S.advanced = false;
+    {
       if (S.savedCrop) { HG.coords.setCrop(S.savedCrop); S.savedCrop = null; }
       S.fade = 0;
       flyBack();
@@ -491,6 +492,44 @@
     if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
     updateUI();
     HG.stage.render();
+  }
+
+  /**
+   * 発展の入口。軌道の上の速度ベクトルが、共通の原点へ滑って集まる。
+   * この1秒が「ベクトルは平行移動しても同じもの」を、今度は全部まとめて見せる。
+   * パッと切り替わると、生徒には別の図が現れたようにしか見えない。
+   */
+  function collectToHodo() {
+    S.advanced = false; S.collecting = true; S.t = 0;
+    const dur = S.fastAnim ? 450 : 1000;
+    const t0 = performance.now();
+    updateUI();
+    (function tick() {
+      S.t = Math.min(1, (performance.now() - t0) / dur);
+      S.fade = 0.86 * S.t;
+      HG.stage.render();
+      if (S.t < 1) requestAnimationFrame(tick);
+      else {
+        S.collecting = false; S.advanced = true; S.fade = 0.86;
+        updateUI(); HG.stage.render();
+      }
+    })();
+  }
+
+  /** 集まる途中の絵。矢印が軌道上の位置から別枠の原点へ滑る */
+  function paintCollect(ctx) {
+    const p = pts(), t = S.t, n = HG.drawing.counts().n;
+    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const s1 = HG.hodo.scale();
+    for (let k = 0; k < n - 1; k++) {
+      const v = HG.drawing.velocity(k);
+      if (!v || !p[k]) continue;
+      const o = HG.hodo.originFor(k);
+      const tail = { x: p[k].x + (o.x - p[k].x) * ease, y: p[k].y + (o.y - p[k].y) * ease };
+      const sc = 1 + (s1 - 1) * ease;
+      const a = C(tail.x, tail.y), b = C(tail.x + v.dx * sc, tail.y + v.dy * sc);
+      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.vel, width: 3, head: 10 });
+    }
   }
 
   /* ---------- ③④ 組送り（必ずアニメーションさせる） ---------- */
@@ -644,6 +683,7 @@
 
   function paint(ctx) {
     if (!S.on) return;
+    if (S.collecting) { paintCollect(ctx); return; }
     if (S.advanced) { paintHodo(ctx); paintGhost(ctx); return; }
     if (S.step === 0) { paintGhost(ctx); return; }
     if (S.step === 3 || S.step === 4) { paintPair(ctx); paintGhost(ctx); return; }
@@ -805,12 +845,11 @@
     const o = HG.state.drawing.origin;
     const d = HG.state.drawing;
     const fin = (S.step >= 5);
-    const five = (S.step === 5);
-    /* ⑤は Δv だけを残す（到達点）。位置も速度も補助線も消す。
-       ⑥ではレイヤーで選ぶ。①②を全部残すと矢印だらけで Δv が読めないが、
-       速度を消すと Δv が宙に浮いて見える。既定は「速度＋Δv」。 */
-    const showPos = fin ? (!five && L.pos && S.focus < 0) : true;
-    const showVel = fin ? (!five && L.vel && S.focus < 0) : (S.step >= 2);
+    /* ⑤⑥ともレイヤーで選ぶ。⑤に入った時点の既定が「Δv だけ」で、
+       そこから速度を戻せる。①②を全部残すと矢印だらけで Δv が読めないが、
+       速度を消すと Δv が宙に浮いて見えるので、切り替えられることが要る。 */
+    const showPos = fin ? (L.pos && S.focus < 0) : true;
+    const showVel = fin ? (L.vel && S.focus < 0) : (S.step >= 2);
 
     if (o && showPos) {
       const c = C(o.x, o.y);
@@ -842,8 +881,8 @@
     }
 
     if (fin) {
-      if (!five && L.pred) paintPrediction(ctx, 'track');
-      if (five || L.dv) paintBackDraw(ctx);
+      if (L.pred) paintPrediction(ctx, 'track');
+      if (L.dv) paintBackDraw(ctx);
       if (S.step === 6 && S.focus < 0) paintAutoOnTrack(ctx);
     }
   }
@@ -885,23 +924,8 @@
    */
   function backScale() {
     if (S.focus >= 0) return 1;
-    const lens = [];
-    HG.state.drawing.deltaVVectors.forEach(v => { if (v) lens.push(Math.hypot(v.dx, v.dy)); });
-    if (!lens.length) return 0;
-    lens.sort((a, b) => a - b);
-    const med = lens[Math.floor(lens.length / 2)] || 1;
-    if (med <= 1e-6) return 0;
-
-    const byArea = HG.coords.area().w * 0.13;
-    const p = pts();
-    const gaps = [];
-    for (let i = 0; i < p.length - 1; i++) {
-      gaps.push(Math.hypot(p[i + 1].x - p[i].x, p[i + 1].y - p[i].y));
-    }
-    gaps.sort((a, b) => a - b);
-    const gap = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
-    const target = gap > 0 ? Math.min(byArea, gap * 1.3) : byArea;
-    return target / med;
+    if (!HG.state.drawing.deltaVVectors.some(v => v)) return 0;
+    return S.dvScale;
   }
 
   /**
@@ -1037,12 +1061,7 @@
 
     /* 全部に同じ倍率を掛ける。長さの比を保たないと、
        「斜方投射は全部同じ長さ」「バネは離れるほど長い」が見えなくなる */
-    let k = backScale();
-    if (S.grow >= 0) {
-      /* 実寸（×1）から表示倍率へ伸びる途中 */
-      const e = S.grow < 0.5 ? 2 * S.grow * S.grow : 1 - Math.pow(-2 * S.grow + 2, 2) / 2;
-      k = 1 + (k - 1) * e;
-    }
+    const k = backScale();
     const fly = S.flying;                      // 0..1 のあいだは別枠から飛んでくる途中
     const hs = HG.hodo.scale();
     const ease = fly < 0 ? 1 : (fly < 0.5 ? 2 * fly * fly : 1 - Math.pow(-2 * fly + 2, 2) / 2);
@@ -1329,10 +1348,11 @@
         hint(msg);
       }
       show('#advBtn', S.step >= 5);
+      show('#dvScaleRow', S.step >= 5);
       show('#hodoRow', S.advanced);
       show('#pairRow', S.advanced && HG.hodo.state.mode === 'pair');
       show('#gapRow', S.advanced && HG.hodo.state.mode === 'stair');
-      show('#layerRow', S.step === 6 && !S.advanced);
+      show('#layerRow', S.step >= 5 && !S.advanced);
       show('#focusRow', S.step === 6 && !S.advanced && S.focus >= 0);
       if (S.step === 6) updateScaleNote();
       show('#drawReset', true);
@@ -1348,8 +1368,9 @@
     show('#collectBtn', S.on && S.step === 3);
     show('#checkBtn', S.on && S.step === 5);
     show('#advBtn', S.on && S.step >= 5);
+    show('#dvScaleRow', S.on && S.step >= 5);
     show('#hodoRow', S.on && S.advanced);
-    show('#layerRow', S.on && S.step === 6 && !S.advanced);
+    show('#layerRow', S.on && S.step >= 5 && !S.advanced);
     show('#focusRow', S.on && S.step === 6 && !S.advanced && S.focus >= 0);
     if (S.step === 6) updateScaleNote();
     show('#pairRow', S.on && S.advanced && HG.hodo.state.mode === 'pair');
@@ -1384,9 +1405,9 @@
       return;
     }
     const k = backScale();
-    let txt = k > 0
-      ? 'Δv は見やすさのため ×' + k.toFixed(0) + ' に伸ばしています（③④の作図は実寸でした）。'
-      : '';
+    let txt = k > 1.01
+      ? 'Δv は見やすさのため ×' + k.toFixed(1) + ' に伸ばしています（速度ベクトルは実寸）。'
+      : (k > 0 ? 'Δv は実寸です。④で作図したままの大きさで並んでいます。' : '');
     /* 折り返しの点は「速度がほぼゼロなのに Δv は最大」になる。
        このアプリの主題そのものなので、結果が出たここで名指しする。
        ⑥より前には出さない（先に言うと予測が予測でなくなる）。 */
@@ -1418,7 +1439,7 @@
     S.on = true; S.checked = false;
     S.pair = 0; S.aligned = false; S.slide = -1; S.settle = -1;
     S.handle = null; S.advanced = false; S.focus = -1;
-    S.grow = -1; S.trackCrop = null; S.holding = false;
+    S.trackCrop = null; S.holding = false; S.collecting = false;
     S.auto = ($('#drawMode').value === 'auto');
     document.body.classList.add('drawing');   // 作図中は他のカードを畳む
     const pred = HG.state.drawing.prediction;
@@ -1630,7 +1651,7 @@
     $('#drawReset').onclick = () => {
       HG.drawing.reset();
       S.checked = false; S.pair = 0; S.aligned = false; S.advanced = false;
-      S.handle = null; S.grow = -1;
+      S.handle = null;
       goto(1);
     };
     $('#drawUndo').onclick = undo;
@@ -1692,9 +1713,15 @@
       HG.dom.text('#hodoGapVal', e.target.value + ' %');
       done();
     };
+    /* Δv の倍率は⑤⑥と発展で同じ値を使う。別々だと、行き来したときに
+       同じ Δv が数倍違う大きさに見えて、対応づけが壊れる。
+       ホドグラフ側は速度ごと同じ倍率で拡大するので、三角形は相似のまま。 */
     $('#hodoZoom').oninput = e => {
-      HG.hodo.setZoom(+e.target.value / 10);
-      HG.dom.text('#hodoZoomVal', '×' + (+e.target.value / 10).toFixed(1));
+      const z = +e.target.value / 10;
+      S.dvScale = z;
+      HG.hodo.setZoom(z);
+      HG.dom.text('#hodoZoomVal', z > 1.01 ? '×' + z.toFixed(1) : '×1.0（実寸）');
+      if (S.step === 6) updateScaleNote();
       done();
     };
     HG.bus.on('selection:changed', () => { if (S.on) stop(); });

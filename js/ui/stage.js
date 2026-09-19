@@ -72,12 +72,22 @@
     fit();
     ctx.clearRect(0, 0, cv.width, cv.height);
     const a = HG.coords.area();
+    /* 描き先は **HG.view.scale から作る**。キャンバスいっぱいに引き伸ばしては
+       いけない。点や矢印は toCanvas()＝横方向の縮尺だけで置かれるのに、画像を
+       キャンバスの高さいっぱいに伸ばすと、縦横比が一致しないときに背景だけが
+       縦に伸びて、黒点と青丸がずれる。
+       fit() は cssW / cssH を別々に丸め、さらに下限（60px）で切り上げるので、
+       横に細長い表示範囲（軌道に合わせた一次元運動など）では縦横比が実際に
+       壊れる。ここを view.scale から作っておけば、その場合も背景と点は必ず
+       一致し、余った領域は単に背景色のまま残る。
+       実測：1050x90 のクロップで、直すまで縦に 9px ずれていた。 */
+    const dw = a.w * HG.view.scale, dh = a.h * HG.view.scale;
     if (source) {
       const k = sourceScale;
-      ctx.drawImage(source, a.x * k, a.y * k, a.w * k, a.h * k, 0, 0, cv.width, cv.height);
+      ctx.drawImage(source, a.x * k, a.y * k, a.w * k, a.h * k, 0, 0, dw, dh);
     } else {
       HG.frames.drawToOffscreen();
-      ctx.drawImage(HG.frames.offscreen, a.x, a.y, a.w, a.h, 0, 0, cv.width, cv.height);
+      ctx.drawImage(HG.frames.offscreen, a.x, a.y, a.w, a.h, 0, 0, dw, dh);
     }
     painters.forEach(p => {
       try { p(ctx); } catch (e) { console.error('[painter]', e); }

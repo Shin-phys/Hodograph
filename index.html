@@ -309,6 +309,11 @@
     <div class="row tight spaced-sm hide" id="animRow">
       <label class="chk"><input type="checkbox" id="fastAnim"> アニメを速く</label>
     </div>
+    <div class="slider hide spaced" id="dvScaleRow">
+      <label>Δv の拡大 <span class="mono" id="hodoZoomVal">×1.0（実寸）</span></label>
+      <input type="range" id="hodoZoom" min="10" max="80" value="10">
+      <div class="sub spaced-sm">⑤の軌道上でも、発展のホドグラフでも同じ倍率を使います。</div>
+    </div>
     <div id="hodoRow" class="hide spaced">
       <div class="sub spaced-sm">発展。速度ベクトルの始点を1つの原点に集めた図です。⑤の軌道上の Δv と行き来しながら見てください。</div>
       <select id="hodoMode">
@@ -316,10 +321,6 @@
         <option value="pair">ペア送り（2本ずつ送る）</option>
         <option value="stair">階段（始点をずらして並べる）</option>
       </select>
-      <div class="slider spaced-sm">
-        <label>別枠の拡大 <span class="mono" id="hodoZoomVal">×1.0</span></label>
-        <input type="range" id="hodoZoom" min="10" max="80" value="10">
-      </div>
       <div class="slider hide spaced-sm" id="gapRow">
         <label>段差（0 にすると全部重なります） <span class="mono" id="hodoGapVal">100 %</span></label>
         <input type="range" id="hodoGap" min="0" max="100" value="100">
