@@ -58,6 +58,7 @@
     settle: -1,         // ④ Δv が r_{k+1} へ滑る（0..1、-1 で停止）
     zoom: 1,            // ③④で三角形をまとめて拡大する倍率（全組で共通）
     flying: -1,         // 発展から軌道へ戻るアニメーション（0..1、-1 で停止）
+    handle: null,       // ④で調整中の Δv の先端（元解像度座標）。null なら未着手
     advanced: false     // 発展：別枠（ホドグラフ）を表示中
   };
 
@@ -68,7 +69,12 @@
 
   const COLORS = {
     pos: '#0b6bcb', vel: '#12a150', dv: '#ff7a00',
-    auto: '#c026d3', mine: '#ff7a00', pred: 'rgba(120,120,120,.75)'
+    auto: '#c026d3', mine: '#ff7a00', pred: 'rgba(120,120,120,.75)',
+    /* ③で前送りするコピー。もとの速度ベクトルと同じ色にしないこと。
+       一次元運動では速度ベクトルが全部おなじ直線に乗るので、同色の矢印が
+       同色の矢印の上を滑ると、どれがどこからどこまで動いたのか読めない
+       （自由落下の実測で判明）。色を分け、運搬中は軌道から浮かせる。 */
+    carry: '#0d9488'
   };
 
   /* 座標変換は必ずここを通す。クロップ（軌道に合わせる）が入ると
@@ -220,21 +226,17 @@
     /* ③はボタン操作だけ。⑤⑥は見るだけ。キャンバスのタップは拾わない */
     if (S.step === 3 || S.step >= 5) { S.pending = null; S.ghost = null; return; }
 
-    /* 一次元の等速運動では2本が完全に重なり、先端も一致する。
-       ④のドラッグ距離がゼロになるので、エラーにせずタップで受ける。
-       ゼロベクトルもベクトルである、というのはここでしか教えられない。 */
-    if (S.step === 4 && S.aligned && !p.dragged && degenerate(S.pair)) {
-      const g0 = pairGeom(S.pair);
-      if (g0) {
-        const tip0 = { x: g0.at.x + g0.vb.dx, y: g0.at.y + g0.vb.dy };
-        if (Math.hypot(tip0.x - p.ox, tip0.y - p.oy) <= HG.state.video.width * 0.16) {
-          HG.drawing.putDeltaV(S.pair, HG.drawing.autoDeltaV(S.pair));
-          S.pending = null;
-          hint('先端が重なっています。Δv = 0 です。ゼロベクトルもベクトルです。');
-          settle();
-          return;
-        }
-      }
+    /* ④はハンドル方式。タップでもドラッグでも、離した位置へ先端を動かすだけ。
+       決定を押すまでは何度でも動かし直せる。一発勝負にしないのは、
+       スマホでは指が先端を隠すので、拡大鏡を見ながら追い込む余地が要るため。
+       判定は単純にしてある（キャンバスのどこを触っても先端が動く）。
+       「ハンドルの近くを押したときだけ掴む」にすると、指の太さで誤爆する。 */
+    if (S.step === 4) {
+      if (!S.aligned) return;
+      S.handle = { x: p.ox, y: p.oy };
+      S.pending = null; S.ghost = null;
+      done();
+      return;
     }
 
     let from, to;
@@ -251,12 +253,14 @@
 
     if (S.step === 1) putPosition(from, to);
     else if (S.step === 2) putVelocity(from, to);
-    else if (S.step === 4) putDeltaV(from, to);
     done();
   }
 
   function preview(a, b) {
     if (!S.on) return;
+    /* ④はドラッグ中もハンドルそのものが動く（仮の矢印を別に出さない）。
+       指を離す前に、決まる形がそのまま見えているほうが調整しやすい。 */
+    if (S.step === 4 && S.aligned) { S.handle = { x: b.ox, y: b.oy }; HG.stage.render(); return; }
     S.ghost = { from: { ox: a.ox, oy: a.oy }, to: { ox: b.ox, oy: b.oy } };
     HG.stage.render();
   }
@@ -277,26 +281,39 @@
     HG.drawing.putVelocity(a.k, { dx: b.x - a.x, dy: b.y - a.y });
   }
 
+  /** ④に入ったときの初期状態。長さゼロ＝向きを何も示唆しない */
+  function resetHandle() {
+    const g = pairGeom(S.pair);
+    S.handle = g ? { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy } : null;
+  }
+
   /**
-   * ④はスナップなし。吸着先は「速度ベクトルの先端」になるが、自動で合わせると
-   * 生徒は先端を結ぶという操作の意味を考えずに済んでしまう。ここが本教材で
-   * 観察したい思考の場所。
+   * ④の確定。**スナップは掛けない。** 吸着先は「速度ベクトルの先端」になるが、
+   * 自動で合わせると、生徒は先端を結ぶという操作の意味を考えずに済んでしまう。
+   * ここが本教材で観察したい思考の場所。
    *
-   * 画面上の2本は倍率 z で拡大されているので、引かれた矢印を z で割って
+   * 画面上の2本は倍率 z で拡大されているので、ハンドルまでの変位を z で割って
    * 実寸の Δv に戻す。速度も Δv も同じ倍率なので三角形は相似のまま。
    */
-  function putDeltaV(from, to) {
-    const k = S.pair;
-    const g = pairGeom(k);
-    if (!g) return;
-    if (!S.aligned) { hint('先に「始点を揃える」を押してください。'); return; }
+  function commitDeltaV() {
+    const k = S.pair, g = pairGeom(k);
+    if (!g || !S.handle) return;
     const tipB = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
-    if (Math.hypot(tipB.x - from.ox, tipB.y - from.oy) > HG.state.video.width * 0.16) {
-      hint('前送りしてきた速度ベクトル（破線）の先端から、もう1本の先端へ引いてください。');
-      return;
-    }
     const z = g.z || 1;
-    HG.drawing.putDeltaV(k, { dx: (to.ox - from.ox) / z, dy: (to.oy - from.oy) / z });
+    const dv = { dx: (S.handle.x - tipB.x) / z, dy: (S.handle.y - tipB.y) / z };
+    /* 長さゼロのまま決定できるのは、本当に2本が重なっている等速運動のときだけ。
+       そうでなければ、まだ何も作図していないということなので差し戻す。
+       等速のときはそのまま Δv = 0 として通す——ゼロベクトルもベクトルである、
+       というのはここでしか教えられない。 */
+    if (Math.hypot(dv.dx, dv.dy) * z < HG.state.video.width * 0.012) {
+      if (!degenerate(k)) {
+        hint('まだ矢印が伸びていません。先端の輪をつまんで、もう1本の速度ベクトルの先端まで動かしてください。');
+        return;
+      }
+      hint('先端が重なっています。Δv = 0 です。ゼロベクトルもベクトルです。');
+    }
+    HG.drawing.putDeltaV(k, dv);
+    S.handle = null;
     settle();
   }
 
@@ -362,6 +379,7 @@
     S.pending = null;
     S.slide = -1;
     S.settle = -1;
+    if (step !== 4) S.handle = null;
     if (S.auto) autoFill(step);
 
     /* ③④は一組だけに注目させるので、ストロボをわずかに落として矢印を立たせる。
@@ -417,6 +435,7 @@
     const v = HG.drawing.autoDeltaV(S.pair);
     if (!v) { goto(5); return; }
     HG.drawing.putDeltaV(S.pair, v);
+    S.handle = null;
     settle();
   }
 
@@ -458,7 +477,7 @@
    */
   function align(fast) {
     if (!pairGeom(S.pair)) { goto(5); return; }
-    S.step = 3; S.aligned = false; S.slide = 0;
+    S.step = 3; S.aligned = false; S.slide = 0; S.handle = null;
     if (!S.zoom || S.zoom === 1) S.zoom = pairZoom();
     const dur = fast ? 170 : 380;
     const t0 = performance.now();
@@ -469,6 +488,7 @@
       if (S.slide < 1) requestAnimationFrame(tick);
       else {
         S.slide = -1; S.aligned = true; S.step = 4;
+        resetHandle();
         updateUI(); HG.stage.render();
       }
     })();
@@ -498,7 +518,7 @@
   function nextPair() {
     if (S.pair >= lastPair()) { goto(5); return; }
     S.pair++;
-    S.aligned = false; S.slide = -1;
+    S.aligned = false; S.slide = -1; S.handle = null;
     S.step = 3;
     updateUI();
     HG.stage.render();
@@ -569,7 +589,7 @@
       if (!v || !p[i] || i === k || i === k + 1) return;
       const a = C(p[i].x, p[i].y), b = C(p[i].x + v.dx, p[i].y + v.dy);
       HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
-        { color: COLORS.vel, width: 1.5, head: 6, alpha: 0.18 });
+        { color: COLORS.vel, width: 1.5, head: 6, alpha: 0.10 });
     });
 
     /* すでに置いた Δv を積み上げて見せる。1本ずつ増えていくのが分かる */
@@ -610,42 +630,91 @@
     /* v_k：r_k から r_{k+1} へ前送り。動くのはこの1本だけ。
        2本とも動かす実装にしないこと。 */
     const t = S.slide >= 0 ? ease(S.slide) : (S.aligned ? 1 : 0);
-    const tail = { x: g.from.x + (g.at.x - g.from.x) * t,
-                   y: g.from.y + (g.at.y - g.from.y) * t };
+
+    /* もとの場所の v_k は、運んでいるあいだも実体として濃いまま残す。
+       「出発点」と「運ばれているコピー」が同時に見えていないと、
+       どこからどこへ動いたのかが読めない。 */
     if (t > 0.02) {
       const F = C(g.from.x, g.from.y), Fb = C(g.from.x + g.vb.dx, g.from.y + g.vb.dy);
       HG.arrows.draw(ctx, F.x, F.y, Fb.x, Fb.y,
-        { color: COLORS.vel, width: 2, head: 7, alpha: 0.24 });
+        { color: COLORS.vel, width: 2, head: 8, alpha: 0.55 });
+      label(ctx, Fb, 'もとの v' + k, 'rgba(18,161,80,.75)');
     }
+
+    /* 運搬は「持ち上げて運ぶ」。軌道と垂直に弧を描いて浮かせ、
+       着地点でぴたりと線の上に降ろす。
+       一次元では速度ベクトルが全部おなじ直線に乗るので、線の上を滑らせると
+       軌跡が追えない。浮かせれば追える。**嘘にはならない** ——
+       ずらしてはいけないのは④で先端どうしを結ぶ瞬間であって、
+       運んでいる途中は演出の領分。着地時のずれはゼロにしてある。 */
+    const dxl = g.at.x - g.from.x, dyl = g.at.y - g.from.y;
+    const ll = Math.hypot(dxl, dyl) || 1;
+    const px = -dyl / ll, py = dxl / ll;           // 軌道に垂直な単位ベクトル
+    /* 浮かせる量は、浮かせる向きに見えている範囲がどれだけあるかで決める。
+       自由落下のように縦に細くクロップしているとき、高さを基準にすると
+       横へ大きく振れて画面の外に出る。 */
+    const ar = HG.coords.area();
+    const amp = (Math.abs(px) * ar.w + Math.abs(py) * ar.h) * 0.06;
+    const lift = amp * Math.sin(Math.PI * t);      // t=0 と t=1 でちょうど 0
+    const tail = { x: g.from.x + dxl * t + px * lift,
+                   y: g.from.y + dyl * t + py * lift };
+
     const Pb = C(tail.x, tail.y), Tb = C(tail.x + g.vb.dx, tail.y + g.vb.dy);
-    /* 一次元では2本が同一直線に乗って1本に見える。下敷き（太く淡く）と
-       上乗せ（細く濃く）で描き分ける。**平行にずらして逃げないこと。**
-       ずらすと Δv が斜めになり、作図として嘘になる。 */
     HG.arrows.draw(ctx, Pb.x, Pb.y, Tb.x, Tb.y,
-      flat ? { color: COLORS.vel, width: 7, head: 13, alpha: 0.28 }
-           : { color: COLORS.vel, width: 2, head: 8, dash: true, alpha: 0.9 });
+      { color: COLORS.carry, width: flat ? 3.5 : 3, head: 11,
+        dash: (S.slide < 0 && S.aligned) });
+    label(ctx, Tb, 'v' + k, COLORS.carry);
+    label(ctx, Ta, 'v' + (k + 1), '#0a7a3c');
 
     if (!S.aligned && S.slide < 0) return;
 
     const dv0 = d.deltaVVectors[k];
+    const tipB = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
     if (dv0) {
       /* 描けた Δv を共通始点 r_{k+1} へ持ち帰る（三角形の一辺を頂点へ） */
       const dv = { dx: dv0.dx * g.z, dy: dv0.dy * g.z };
       const s = S.settle >= 0 ? ease(S.settle) : 1;
-      const from0 = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
-      const tl = { x: from0.x + (g.at.x - from0.x) * s,
-                   y: from0.y + (g.at.y - from0.y) * s };
+      const tl = { x: tipB.x + (g.at.x - tipB.x) * s,
+                   y: tipB.y + (g.at.y - tipB.y) * s };
       const a = C(tl.x, tl.y), b = C(tl.x + dv.dx, tl.y + dv.dy);
       if (Math.hypot(dv.dx, dv.dy) < 1) HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv });
       else HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.dv, width: 3.5, head: 11 });
     } else if (S.step === 4) {
-      /* どこから引くかだけ示す。引く先は生徒が自分で合わせる（磁石なし） */
+      /* ④は「先端にハンドルを出して、それを動かして決める」方式。
+         Δv の始点は生徒が選ぶものではなく、必ず v_k の先端に置かれる。
+         そこを指で正確に押さえさせるのは思考ではないので、アプリが引き受ける。
+         **もう一方の先端がどこかを見つけること**が④で観察したい思考なので、
+         そこは手つかずで残す（初期の矢印は長さゼロ。向きを示唆しない）。 */
+      const h = S.handle || tipB;
+      const a = C(tipB.x, tipB.y), b = C(h.x, h.y);
+      if (Math.hypot(h.x - tipB.x, h.y - tipB.y) > 1) {
+        HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.dv, width: 3.5, head: 11 });
+      } else {
+        HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv });
+      }
+      /* つまむ場所を大きく描く。指で隠れるので輪だけにする */
       ctx.save();
-      ctx.fillStyle = 'rgba(255,122,0,.9)';
-      ctx.beginPath(); ctx.arc(Tb.x, Tb.y, 5 * HG.view.dpr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = COLORS.dv;
+      ctx.lineWidth = 2.5 * HG.view.dpr;
+      ctx.beginPath(); ctx.arc(b.x, b.y, 11 * HG.view.dpr, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = COLORS.dv;
+      ctx.beginPath(); ctx.arc(b.x, b.y, 11 * HG.view.dpr, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
     if (S.step === 4) paintMini(ctx, k);
+  }
+
+  /** 矢印の先に小さな名札を置く。どれがどの矢印かを色だけに頼らない */
+  function label(ctx, at, text, color) {
+    ctx.save();
+    ctx.font = (12 * HG.view.dpr) + 'px ui-monospace,monospace';
+    ctx.lineWidth = 3 * HG.view.dpr;
+    ctx.strokeStyle = 'rgba(255,255,255,.92)';
+    ctx.fillStyle = color;
+    ctx.strokeText(text, at.x + 7 * HG.view.dpr, at.y - 7 * HG.view.dpr);
+    ctx.fillText(text, at.x + 7 * HG.view.dpr, at.y - 7 * HG.view.dpr);
+    ctx.restore();
   }
 
   /* ①②⑥：ストロボ画像の上 */
@@ -1111,8 +1180,8 @@
   const STEPS = [
     { id: 1, label: '① 位置', hint: '基準点をタップしてください。そこから各コマの黒点へ矢印を引きます。' },
     { id: 2, label: '② 速度', hint: '隣り合う位置ベクトルの先端どうし（＝隣の黒点どうし）を結んでください。これが速度ベクトルです。' },
-    { id: 3, label: '③ 始点を揃える', hint: '「始点を揃える」を押すと、前の速度ベクトルが次の点まで前送りされ、2本の始点が揃います。動くのは1本だけです。' },
-    { id: 4, label: '④ Δv', hint: '揃えた2本の先端どうしを結んでください。これが Δv（加速度の向き）です。ここは磁石が効きません。' },
+    { id: 3, label: '③ 始点を揃える', hint: '「始点を揃える」を押すと、前の速度ベクトルが持ち上げられて次の点まで運ばれ、2本の始点が揃います。動くのは1本だけです。' },
+    { id: 4, label: '④ Δv', hint: '橙の輪をつまんで、もう1本の速度ベクトルの先端まで動かし、「この向きで決定」を押してください。長押しで拡大鏡が出ます。磁石は効きません。' },
     { id: 5, label: '⑤ Δv だけ', hint: '速度ベクトルを消して、軌道の上の Δv だけを残しました。向きの傾向を見てください。' },
     { id: 6, label: '⑥ 答え合わせ', hint: '自動算出した Δv（紫の破線）を軌道の上に重ねました。ズレの理由を考えてみてください。' }
   ];
@@ -1154,7 +1223,7 @@
     updateAutoPanel();
     if (S.auto) {
       /* 自動モードでは作図の操作は出さない。表示するだけ */
-      ['#fillRest', '#restPairs', '#nextStep', '#collectBtn', '#checkBtn', '#drawUndo']
+      ['#fillRest', '#restPairs', '#nextStep', '#collectBtn', '#checkBtn', '#drawUndo', '#confirmDv']
         .forEach(x => show(x, false));
       const sa = STEPS[S.step - 1];
       if (sa) {
@@ -1177,6 +1246,7 @@
     show('#fillRest', S.on && (S.step === 1 || S.step === 2) &&
          (S.step === 1 ? (HG.state.drawing.origin && c.pos >= Math.min(3, c.posNeed)) : c.vel >= Math.min(3, c.velNeed)));
     /* 手描きは最初の1〜2組だけでよい。2組目からは「残りの組を自動で」を出す */
+    show('#confirmDv', S.on && S.step === 4 && S.aligned);
     show('#restPairs', S.on && (S.step === 3 || S.step === 4) && S.pair >= 1 && S.pair < lastPair());
     show('#nextStep', S.on && S.step <= 2 && complete(S.step));
     show('#collectBtn', S.on && S.step === 3);
@@ -1251,7 +1321,7 @@
     if (HG.drawing.counts().n < 3) { alert('座標のあるコマが3点以上必要です。'); return; }
     S.on = true; S.checked = false;
     S.pair = 0; S.aligned = false; S.slide = -1; S.settle = -1;
-    S.advanced = false; S.zoom = 1; S.focus = -1;
+    S.handle = null; S.advanced = false; S.zoom = 1; S.focus = -1;
     S.auto = ($('#drawMode').value === 'auto');
     document.body.classList.add('drawing');   // 作図中は他のカードを畳む
     const pred = HG.state.drawing.prediction;
@@ -1366,7 +1436,7 @@
   function undo() {
     const d = HG.state.drawing;
     /* ④はいま扱っている組だけを消す。組送りなので「最後の1本」では合わない */
-    if (S.step === 4) { d.deltaVVectors[S.pair] = undefined; done(); return; }
+    if (S.step === 4) { d.deltaVVectors[S.pair] = undefined; resetHandle(); done(); return; }
     const arr = S.step === 1 ? d.positionVectors : d.velocityVectors;
     for (let i = arr.length - 1; i >= 0; i--) {
       if (arr[i]) { arr[i] = undefined; break; }
@@ -1448,7 +1518,8 @@
     $('#startDraw').onclick = start;
     $('#drawReset').onclick = () => {
       HG.drawing.reset();
-      S.checked = false; S.pair = 0; S.aligned = false; S.advanced = false; S.zoom = 1;
+      S.checked = false; S.pair = 0; S.aligned = false; S.advanced = false;
+      S.zoom = 1; S.handle = null;
       goto(1);
     };
     $('#drawUndo').onclick = undo;
@@ -1468,6 +1539,7 @@
       goto(S.step + 1);
     };
     $('#collectBtn').onclick = () => align();
+    $('#confirmDv').onclick = commitDeltaV;
     $('#restPairs').onclick = runRest;
     $('#checkBtn').onclick = check;
     $('#advBtn').onclick = () => setAdvanced(!S.advanced);
