@@ -19,6 +19,9 @@
 
   let cv = null;
   let press = null;
+  /* 短い調整を繰り返すステップ（④の Δv）では、長押しを待たずに拡大鏡を出す。
+     長押しが要ると、数ピクセルの追い込みには使えない。 */
+  let eagerLoupe = false;
   let handler = null;         // ({ox, oy, cx, cy, dragged}) => void
   let preview = null;         // ドラッグ中の描き先（フェーズ4で使う）
 
@@ -39,7 +42,8 @@
       cv.setPointerCapture(e.pointerId);
       const p = toPoint(e);
       press = { start: p, p: p, moved: 0, loupe: false, t0: performance.now() };
-      press.timer = setTimeout(() => { press.loupe = true; HG.loupe.show(press.p); }, LONG_PRESS_MS);
+      if (eagerLoupe) { press.loupe = true; HG.loupe.show(p); }
+      else press.timer = setTimeout(() => { press.loupe = true; HG.loupe.show(press.p); }, LONG_PRESS_MS);
     });
 
     cv.addEventListener('pointermove', e => {
@@ -82,6 +86,7 @@
   HG.pointer = {
     attach,
     setHandler(fn) { handler = fn; },
-    setPreview(fn) { preview = fn; }
+    setPreview(fn) { preview = fn; },
+    setEagerLoupe(on) { eagerLoupe = !!on; }
   };
 })(window.HG = window.HG || {});

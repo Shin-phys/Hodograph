@@ -56,9 +56,13 @@
     aligned: false,     // その組の③が済んだか
     slide: -1,          // ③ v_k が r_k → r_{k+1} へ滑る（0..1、-1 で停止）
     settle: -1,         // ④ Δv が r_{k+1} へ滑る（0..1、-1 で停止）
-    zoom: 1,            // ③④で三角形をまとめて拡大する倍率（全組で共通）
     flying: -1,         // 発展から軌道へ戻るアニメーション（0..1、-1 で停止）
     handle: null,       // ④で調整中の Δv の先端（元解像度座標）。null なら未着手
+    fastAnim: false,    // 移動アニメを速くする（localStorage に覚える）
+    grow: -1,           // ④→⑤で Δv が表示倍率まで伸びる（0..1、-1 で停止）
+    holding: false,     // 着地した Δv を見せる間を取っている最中
+    handleMoved: false, // ④でハンドルに一度でも触れたか
+    trackCrop: null,    // ③④のあいだ預かっておく、軌道に合わせたクロップ
     advanced: false     // 発展：別枠（ホドグラフ）を表示中
   };
 
@@ -125,64 +129,105 @@
     return { x: d.x * m, y: d.y * m };
   }
 
-  /* ---------- ③④の拡大倍率（全組で共通にする） ----------
-     組ごとに変えると、組を送るたびに図が跳ねて読みにくい。
-     速度も Δv も同じ倍率で伸ばすので三角形は相似のまま。
-     Δv だけ伸ばすと三角形が閉じなくなり、作図として嘘になる。 */
-  function pairZoom() {
-    const W = HG.state.video.width;
-    const n = HG.drawing.counts().n;
-    const vs = [], ds = [];
-    for (let k = 0; k < n - 1; k++) {
-      const v = HG.drawing.velocity(k);
-      if (v) vs.push(Math.hypot(v.dx, v.dy));
-    }
-    for (let k = 0; k < n - 2; k++) {
-      const d = HG.drawing.autoDeltaV(k);
-      if (d) ds.push(Math.hypot(d.dx, d.dy));
-    }
-    if (!vs.length) return 1;
-    vs.sort((a, b) => a - b); ds.sort((a, b) => a - b);
-    const lv = vs[vs.length - 1];
-    const ld = ds.length ? ds[Math.floor(ds.length / 2)] : 0;
-    if (lv < 1e-6) return 1;
-    const wantDv = ld > 1e-6 ? (W * 0.11) / ld : Infinity;
-    const capV = (W * 0.40) / lv;
-    return Math.max(1, Math.min(wantDv, capV));
-  }
+  /* ---------- ③④は実寸で描く（倍率を掛けない） ----------
+     以前は「Δv を読める長さに」と倍率を掛けていたが、掛けると
 
-  /** いまの組の3点と、拡大済みのベクトル */
+       ・矢印がどこから生えるかを見ずに長さだけで頭打ちを決めるので、
+         斜方投射のように軌道が画面の上端に近い素材では突き抜ける
+       ・両方の先端が何もない空中に浮き、合っているかを確かめる手がかりが無い
+
+     の2つで損をしていた。倍率1なら：
+
+       ・v_{k+1} の先端は **ちょうど次の黒点 r_{k+2}** に乗る
+       ・前送りした v_k の先端は **r_k を r_{k+1} について折り返した点**
+
+     となり、両端が画面上の目印になる。矢印は軌道から1ステップぶんしか
+     外へ出ないので、はみ出しようがない。
+
+     代償は Δv が短くなること。ただしそれは素材の問題としてそのまま出る
+     ほうが正しい。Δv が短いということは向きの不確かさが大きいということで、
+     矢印を伸ばして誤魔化すのではなく、コマ間隔を広げさせるのが筋
+     （③のヒントで警告する）。作図は④のハンドル＋拡大鏡で追い込む。
+
+     なお⑤の一覧は比較のための表示なので、そちらは backScale() で拡大した
+     まま残す（倍率は画面に明示してある）。 */
+
+  /** いまの組の3点と、実寸のベクトル */
   function pairGeom(k) {
     const p = pts();
     const from = p[k], at = p[k + 1];
     const v0 = HG.drawing.velocity(k), v1 = HG.drawing.velocity(k + 1);
     if (!from || !at || !v0 || !v1) return null;
-    const z = S.zoom || 1;
     return {
-      from: from, at: at, z: z,
-      vb: { dx: v0.dx * z, dy: v0.dy * z },      // 前送りする v_k
-      va: { dx: v1.dx * z, dy: v1.dy * z }       // その場にいる v_{k+1}
+      from: from, at: at,
+      vb: v0,        // 前送りする v_k（先端は r_k の折り返し点になる）
+      va: v1         // その場にいる v_{k+1}（先端は次の黒点 r_{k+2}）
     };
+  }
+
+  /** 隣り合う点の間隔の中央値。長さの基準に使う */
+  function medianGap() {
+    const p = pts(), g = [];
+    for (let i = 0; i < p.length - 1; i++) {
+      g.push(Math.hypot(p[i + 1].x - p[i].x, p[i + 1].y - p[i].y));
+    }
+    if (!g.length) return 1;
+    g.sort((a, b) => a - b);
+    return g[Math.floor(g.length / 2)] || 1;
+  }
+
+  /**
+   * ③④のあいだの表示範囲。
+   * 前送りした v_k の先端（折り返し点）は軌道の外へ1ステップぶん出るので、
+   * 軌道にぴったり合わせたクロップのままだと画面から消える。
+   * 持ち上げの弧のぶんも含めて広げ、⑤で元に戻す。
+   */
+  function pairViewCrop() {
+    const p = pts(), n = HG.drawing.counts().n;
+    if (n < 3) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const add = (x, y) => {
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    };
+    p.forEach(f => add(f.x, f.y));
+    for (let k = 0; k < n - 1; k++) {
+      const v = HG.drawing.velocity(k), at = p[k + 1];
+      if (v && at) add(at.x + v.dx, at.y + v.dy);     // 折り返し点
+    }
+    const b = HG.view.crop;
+    if (b) { add(b.x, b.y); add(b.x + b.w, b.y + b.h); }
+    const m = Math.max(x1 - x0, y1 - y0) * 0.10;       // 持ち上げの弧と名札のぶん
+    return { x: x0 - m, y: y0 - m, w: (x1 - x0) + 2 * m, h: (y1 - y0) + 2 * m };
   }
 
   /** 最後の組かどうか */
   function lastPair() { return Math.max(0, HG.drawing.counts().n - 3); }
 
   /**
-   * この組で作図が縮退するか（等速運動。2本の先端が重なる）。
+   * この素材で Δv が実質ゼロか（等速運動。2本の先端が重なって見える）。
    *
-   * 判定はジッタではなく**画面上で先端が重なっているか**で行う。
+   * **判定に使うのは点の間隔。ジッタを使ってはいけない。**
    * ジッタの見積もりは間隔1コマの二階差分から作られているが、等加速度運動では
-   * その二階差分こそが信号そのものなので、ジッタで判定すると「重なっている」と
-   * 誤判定する（自由落下や、おもりで引いた台車で実際に起きた）。
-   * ここで問いたいのは「生徒がドラッグできるだけの距離が2つの先端のあいだに
-   * あるか」という画面の事実なので、拡大後の長さで見る。
+   * その二階差分こそが信号そのものなので、ジッタを基準にすると自由落下・
+   * 斜面の台車・円運動まで「重なっている」と誤判定する（実際に踏んだ）。
+   *
+   * 点の間隔を基準にすれば、画面の拡大率にもクロップにも左右されず、
+   * 「2つの先端のあいだに、指で動かせるだけの隙間があるか」という
+   * 画面の事実をそのまま測れる。
+   *
+   * **組ごとではなく素材全体で判定する。**等加速度運動でも後ろの組ほど
+   * |Δv| / |v| は小さくなるので、組ごとに見ると途中から誤判定する。
    */
-  function degenerate(k) {
-    const d = HG.drawing.autoDeltaV(k);
-    if (!d) return false;
-    const z = S.zoom || 1;
-    return Math.hypot(d.dx, d.dy) * z < HG.state.video.width * 0.012;
+  function degenerate() {
+    const n = HG.drawing.counts().n, lens = [];
+    for (let k = 0; k < n - 2; k++) {
+      const d = HG.drawing.autoDeltaV(k);
+      if (d) lens.push(Math.hypot(d.dx, d.dy));
+    }
+    if (!lens.length) return false;
+    lens.sort((a, b) => a - b);
+    return lens[Math.floor(lens.length / 2)] < medianGap() * 0.03;
   }
   function active() { return S.on; }
 
@@ -234,6 +279,7 @@
     if (S.step === 4) {
       if (!S.aligned) return;
       S.handle = { x: p.ox, y: p.oy };
+      S.handleMoved = true;
       S.pending = null; S.ghost = null;
       done();
       return;
@@ -260,7 +306,10 @@
     if (!S.on) return;
     /* ④はドラッグ中もハンドルそのものが動く（仮の矢印を別に出さない）。
        指を離す前に、決まる形がそのまま見えているほうが調整しやすい。 */
-    if (S.step === 4 && S.aligned) { S.handle = { x: b.ox, y: b.oy }; HG.stage.render(); return; }
+    if (S.step === 4 && S.aligned) {
+      S.handle = { x: b.ox, y: b.oy }; S.handleMoved = true;
+      HG.stage.render(); return;
+    }
     S.ghost = { from: { ox: a.ox, oy: a.oy }, to: { ox: b.ox, oy: b.oy } };
     HG.stage.render();
   }
@@ -285,6 +334,7 @@
   function resetHandle() {
     const g = pairGeom(S.pair);
     S.handle = g ? { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy } : null;
+    S.handleMoved = false;
   }
 
   /**
@@ -299,18 +349,19 @@
     const k = S.pair, g = pairGeom(k);
     if (!g || !S.handle) return;
     const tipB = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
-    const z = g.z || 1;
-    const dv = { dx: (S.handle.x - tipB.x) / z, dy: (S.handle.y - tipB.y) / z };
-    /* 長さゼロのまま決定できるのは、本当に2本が重なっている等速運動のときだけ。
-       そうでなければ、まだ何も作図していないということなので差し戻す。
-       等速のときはそのまま Δv = 0 として通す——ゼロベクトルもベクトルである、
-       というのはここでしか教えられない。 */
-    if (Math.hypot(dv.dx, dv.dy) * z < HG.state.video.width * 0.012) {
-      if (!degenerate(k)) {
-        hint('まだ矢印が伸びていません。先端の輪をつまんで、もう1本の速度ベクトルの先端まで動かしてください。');
-        return;
-      }
-      hint('先端が重なっています。Δv = 0 です。ゼロベクトルもベクトルです。');
+    /* ③④は実寸なので、ハンドルまでの変位がそのまま Δv */
+    const dv = { dx: S.handle.x - tipB.x, dy: S.handle.y - tipB.y };
+    /* 差し戻すのは「まだ一度もハンドルに触れていない」ときだけ。
+       長さで判定しない。**④は judge しない**——生徒がハンドルを始点に戻して
+       「Δv = 0」と答えたなら、それはその生徒の答えであって、正しいかどうかは
+       ⑥の答え合わせが言う。磁石を掛けないのと同じ理由で、ここで先回りして
+       正解の方向へ誘導しない。
+       等速運動では、先端をタップするだけで Δv = 0 の答えになる——
+       ゼロベクトルもベクトルである、というのはここでしか教えられない。 */
+    if (!S.handleMoved) {
+      hint('まだ矢印が伸びていません。先端の輪をつまんで、もう1本の速度ベクトルの先端（次の黒点）まで動かしてください。'
+           + (degenerate() ? '　2本が重なって見えるときは、輪をその場でタップすれば Δv = 0 として進めます。' : ''));
+      return;
     }
     HG.drawing.putDeltaV(k, dv);
     S.handle = null;
@@ -375,6 +426,7 @@
   }
 
   function goto(step) {
+    const from = S.step;
     S.step = step;
     S.pending = null;
     S.slide = -1;
@@ -386,18 +438,39 @@
        ⑤⑥は軌道そのものを見せたいので落とさない。 */
     S.fade = (step === 3 || step === 4) ? 0.35 : 0;
 
-    if (step === 3) {
-      /* 組送りの開始。倍率は全組で共通にする（組ごとに変えると図が跳ねる） */
-      S.zoom = pairZoom();
-      if (!S.aligned) S.slide = -1;
+    if (step === 3 || step === 4) {
+      /* 折り返し点が軌道の外へ出るぶん、表示範囲を広げておく */
+      if (!S.trackCrop && HG.view.crop) S.trackCrop = HG.view.crop;
+      const c = pairViewCrop();
+      if (c) HG.coords.setCrop(c);
+    } else {
+      if (S.trackCrop) { HG.coords.setCrop(S.trackCrop); S.trackCrop = null; }
+      S.aligned = false; S.slide = -1;
     }
-    if (step >= 5) { S.aligned = false; S.slide = -1; }
+    /* ④は短い調整の連続なので、拡大鏡は長押しを待たずに出す */
+    if (HG.pointer.setEagerLoupe) HG.pointer.setEagerLoupe(step === 4);
 
     if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
     HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
     updateUI();
     updateReveal();
     HG.stage.render();
+    /* ③④は実寸、⑤は比較のための拡大。黙って大きくなると別物に見えるので、
+       伸びるところを見せる。 */
+    if (step === 5 && from === 4) growDeltaV();
+  }
+
+  /** ⑤に入ったとき、Δv が実寸から表示倍率まで伸びるのを見せる */
+  function growDeltaV() {
+    if (backScale() <= 1) return;
+    S.grow = 0;
+    const t0 = performance.now();
+    (function tick() {
+      S.grow = Math.min(1, (performance.now() - t0) / (S.fastAnim ? 220 : 500));
+      HG.stage.render();
+      if (S.grow < 1) requestAnimationFrame(tick);
+      else { S.grow = -1; HG.stage.render(); }
+    })();
   }
 
   /* ---------- 発展：別枠（ホドグラフ）の出し入れ ----------
@@ -457,7 +530,7 @@
       /* アニメーション中は待つ（途中で割り込むと矢印が飛ぶ）。
          ここで空回りするあいだは guard を減らさない。減らしてしまうと
          アニメーションだけで回数を使い切り、途中で止まる。 */
-      if (S.slide >= 0 || S.settle >= 0 || S.flying >= 0) { requestAnimationFrame(drive); return; }
+      if (S.slide >= 0 || S.settle >= 0 || S.flying >= 0 || S.holding) { requestAnimationFrame(drive); return; }
       if (guard-- <= 0) { S.runAll = false; updateUI(); return; }
       autoNext();
       setTimeout(drive, 60);
@@ -478,8 +551,7 @@
   function align(fast) {
     if (!pairGeom(S.pair)) { goto(5); return; }
     S.step = 3; S.aligned = false; S.slide = 0; S.handle = null;
-    if (!S.zoom || S.zoom === 1) S.zoom = pairZoom();
-    const dur = fast ? 170 : 380;
+    const dur = fast ? 170 : (S.fastAnim ? 300 : 800);
     const t0 = performance.now();
     updateUI();
     (function tick() {
@@ -503,14 +575,26 @@
   function settle(fast) {
     S.ghost = null; S.pending = null;
     S.settle = 0;
-    const dur = fast ? 150 : 320;
+    const dur = fast ? 150 : (S.fastAnim ? 200 : 550);
     const t0 = performance.now();
     updateUI();
     (function tick() {
       S.settle = Math.min(1, (performance.now() - t0) / dur);
       HG.stage.render();
       if (S.settle < 1) requestAnimationFrame(tick);
-      else { S.settle = -1; nextPair(); }
+      else {
+        S.settle = -1;
+        HG.stage.render();
+        /* 置かれた結果を見る間を取る。ここが無いと「動いた→もう次」になって
+           速すぎると感じる（実機で指摘された）。
+           この間も「まだ次へ進んでいない」ので holding を立てる。立てないと、
+           自動モードの駆動側が隙間を見て同じ組をもう一度描きにくる。 */
+        const hold = fast ? 0 : (S.fastAnim ? 0 : 300);
+        if (hold) {
+          S.holding = true;
+          setTimeout(() => { S.holding = false; nextPair(); }, hold);
+        } else nextPair();
+      }
     })();
   }
 
@@ -536,7 +620,7 @@
     (function drive() {
       if (!S.on || !S.runAll) { S.runAll = false; return; }
       if (S.step >= 5) { S.runAll = false; updateUI(); return; }
-      if (S.slide >= 0 || S.settle >= 0) { requestAnimationFrame(drive); return; }
+      if (S.slide >= 0 || S.settle >= 0 || S.holding) { requestAnimationFrame(drive); return; }
       if (guard-- <= 0) { S.runAll = false; updateUI(); return; }
       if (S.step === 3) align(true);
       else if (S.step === 4) {
@@ -574,7 +658,6 @@
   function paintPair(ctx) {
     const p = pts(), d = HG.state.drawing, k = S.pair;
     const o = d.origin;
-    const z = S.zoom || 1;
     const ease = t => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 
     if (o) {
@@ -597,8 +680,8 @@
       if (!v || i >= k) return;
       const at = p[HG.drawing.posIndexOfDeltaV(i)];
       if (!at) return;
-      const a = C(at.x, at.y), b = C(at.x + v.dx * z, at.y + v.dy * z);
-      if (Math.hypot(v.dx, v.dy) * z < 1) { HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv }); return; }
+      const a = C(at.x, at.y), b = C(at.x + v.dx, at.y + v.dy);
+      if (Math.hypot(v.dx, v.dy) < 0.5) { HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv }); return; }
       HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
         { color: COLORS.dv, width: 2, head: 8, alpha: 0.38 });
     });
@@ -672,12 +755,12 @@
     const tipB = { x: g.at.x + g.vb.dx, y: g.at.y + g.vb.dy };
     if (dv0) {
       /* 描けた Δv を共通始点 r_{k+1} へ持ち帰る（三角形の一辺を頂点へ） */
-      const dv = { dx: dv0.dx * g.z, dy: dv0.dy * g.z };
+      const dv = dv0;
       const s = S.settle >= 0 ? ease(S.settle) : 1;
       const tl = { x: tipB.x + (g.at.x - tipB.x) * s,
                    y: tipB.y + (g.at.y - tipB.y) * s };
       const a = C(tl.x, tl.y), b = C(tl.x + dv.dx, tl.y + dv.dy);
-      if (Math.hypot(dv.dx, dv.dy) < 1) HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv });
+      if (Math.hypot(dv.dx, dv.dy) < 0.5) HG.arrows.dot(ctx, a.x, a.y, { color: COLORS.dv });
       else HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.dv, width: 3.5, head: 11 });
     } else if (S.step === 4) {
       /* ④は「先端にハンドルを出して、それを動かして決める」方式。
@@ -921,7 +1004,7 @@
        ここでしか教えられない。 */
     const off = listOffset();
     const j = HG.selection.current().jitter;
-    if (med < 3 * j) {
+    if (degenerate()) {
       d.deltaVVectors.forEach((v, i) => {
         if (!v) return;
         const at0 = p[HG.drawing.posIndexOfDeltaV(i)];
@@ -954,7 +1037,12 @@
 
     /* 全部に同じ倍率を掛ける。長さの比を保たないと、
        「斜方投射は全部同じ長さ」「バネは離れるほど長い」が見えなくなる */
-    const k = backScale();
+    let k = backScale();
+    if (S.grow >= 0) {
+      /* 実寸（×1）から表示倍率へ伸びる途中 */
+      const e = S.grow < 0.5 ? 2 * S.grow * S.grow : 1 - Math.pow(-2 * S.grow + 2, 2) / 2;
+      k = 1 + (k - 1) * e;
+    }
     const fly = S.flying;                      // 0..1 のあいだは別枠から飛んでくる途中
     const hs = HG.hodo.scale();
     const ease = fly < 0 ? 1 : (fly < 0.5 ? 2 * fly * fly : 1 - Math.pow(-2 * fly + 2, 2) / 2);
@@ -1181,7 +1269,7 @@
     { id: 1, label: '① 位置', hint: '基準点をタップしてください。そこから各コマの黒点へ矢印を引きます。' },
     { id: 2, label: '② 速度', hint: '隣り合う位置ベクトルの先端どうし（＝隣の黒点どうし）を結んでください。これが速度ベクトルです。' },
     { id: 3, label: '③ 始点を揃える', hint: '「始点を揃える」を押すと、前の速度ベクトルが持ち上げられて次の点まで運ばれ、2本の始点が揃います。動くのは1本だけです。' },
-    { id: 4, label: '④ Δv', hint: '橙の輪をつまんで、もう1本の速度ベクトルの先端まで動かし、「この向きで決定」を押してください。長押しで拡大鏡が出ます。磁石は効きません。' },
+    { id: 4, label: '④ Δv', hint: '橙の輪をつまんで、もう1本の速度ベクトルの先端（＝次の黒点）まで動かし、「この向きで決定」を押してください。触れると拡大鏡が出ます。磁石は効きません。' },
     { id: 5, label: '⑤ Δv だけ', hint: '速度ベクトルを消して、軌道の上の Δv だけを残しました。向きの傾向を見てください。' },
     { id: 6, label: '⑥ 答え合わせ', hint: '自動算出した Δv（紫の破線）を軌道の上に重ねました。ズレの理由を考えてみてください。' }
   ];
@@ -1207,8 +1295,15 @@
       /* 組送りの現在地を常時表示する。いま何組目かが分からないと逐次の意味がない */
       if (S.step === 3 || S.step === 4) {
         extra = '（' + (S.pair + 1) + ' / ' + (lastPair() + 1) + ' 組）';
-        if (S.step === 4 && degenerate(S.pair)) {
-          extra += '　※2本が重なっています。先端をタップすると Δv = 0 として進めます。';
+        if (S.step === 4 && degenerate()) {
+          extra += '　※2本が重なっています。輪を動かさずに決定すると Δv = 0 として進めます。';
+        }
+        /* ③④は実寸なので、素材が粗いと Δv がそのまま短く出る。
+           矢印を伸ばして誤魔化さない代わりに、間隔を広げるよう促す。 */
+        const q = HG.selection.current();
+        if (!degenerate() && q.angle > 25) {
+          extra += '　※この間隔では Δv の向きの不確かさが ±' + q.angle.toFixed(0) +
+                   '° あります。いったん作図をやめてコマ間隔を広げると読みやすくなります。';
         }
       }
       hint(st.hint + extra);
@@ -1219,6 +1314,7 @@
     show('#drawActions', S.on);
     show('#autoNext', S.on && S.auto && S.step < 6);
     show('#drawModeRow', !S.on);
+    show('#animRow', S.on && S.step >= 1 && S.step <= 4);
     HG.dom.text('#advBtn', S.advanced ? '軌道へ戻る' : '発展：ホドグラフ');
     updateAutoPanel();
     if (S.auto) {
@@ -1289,7 +1385,7 @@
     }
     const k = backScale();
     let txt = k > 0
-      ? 'Δv は見やすさのため ×' + k.toFixed(0) + ' に伸ばしています（速度ベクトルは実寸）。'
+      ? 'Δv は見やすさのため ×' + k.toFixed(0) + ' に伸ばしています（③④の作図は実寸でした）。'
       : '';
     /* 折り返しの点は「速度がほぼゼロなのに Δv は最大」になる。
        このアプリの主題そのものなので、結果が出たここで名指しする。
@@ -1321,7 +1417,8 @@
     if (HG.drawing.counts().n < 3) { alert('座標のあるコマが3点以上必要です。'); return; }
     S.on = true; S.checked = false;
     S.pair = 0; S.aligned = false; S.slide = -1; S.settle = -1;
-    S.handle = null; S.advanced = false; S.zoom = 1; S.focus = -1;
+    S.handle = null; S.advanced = false; S.focus = -1;
+    S.grow = -1; S.trackCrop = null; S.holding = false;
     S.auto = ($('#drawMode').value === 'auto');
     document.body.classList.add('drawing');   // 作図中は他のカードを畳む
     const pred = HG.state.drawing.prediction;
@@ -1405,6 +1502,20 @@
     const rows = [];
     let worst = 0, ok = 0, cnt = 0;
     for (let k = 0; k < n - 2; k++) {
+      /* 生徒が「Δv = 0」と答えた組は angleError が出せない。黙って飛ばすと
+         無評価になってしまうので、ここで拾う。④では判定しない代わりに、
+         ここではっきり言う。 */
+      const mine0 = HG.state.drawing.deltaVVectors[k], ref0 = HG.drawing.autoDeltaV(k);
+      if (mine0 && ref0 && Math.hypot(mine0.dx, mine0.dy) < 1e-6) {
+        if (Math.hypot(ref0.dx, ref0.dy) > medianGap() * 0.03) {
+          cnt++;
+          rows.push('Δv' + k + ' … <span class="warn">ゼロとしましたが、実際にはゼロではありませんでした</span>');
+        } else {
+          cnt++; ok++;
+          rows.push('Δv' + k + ' … <span class="ok">ゼロで合っています（ゼロベクトルもベクトルです）</span>');
+        }
+        continue;
+      }
       const e = HG.drawing.angleError(k);
       if (!e) continue;
       cnt++; if (e.ok) ok++;
@@ -1519,7 +1630,7 @@
     $('#drawReset').onclick = () => {
       HG.drawing.reset();
       S.checked = false; S.pair = 0; S.aligned = false; S.advanced = false;
-      S.zoom = 1; S.handle = null;
+      S.handle = null; S.grow = -1;
       goto(1);
     };
     $('#drawUndo').onclick = undo;
@@ -1537,6 +1648,13 @@
     $('#nextStep').onclick = () => {
       if (S.step === 2) { S.pair = 0; S.aligned = false; }
       goto(S.step + 1);
+    };
+    /* 授業で繰り返し使うので、速さの好みは端末に覚えさせる */
+    try { S.fastAnim = localStorage.getItem('hg.fastAnim') === '1'; } catch (e) { S.fastAnim = false; }
+    $('#fastAnim').checked = S.fastAnim;
+    $('#fastAnim').onchange = e => {
+      S.fastAnim = e.target.checked;
+      try { localStorage.setItem('hg.fastAnim', S.fastAnim ? '1' : '0'); } catch (err) { /* 使えなくても動く */ }
     };
     $('#collectBtn').onclick = () => align();
     $('#confirmDv').onclick = commitDeltaV;
