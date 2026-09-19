@@ -41,7 +41,9 @@
             '「重力は下向きなのに加速度は斜面方向」という分力の話に、ホドグラフから入れます。',
       sub: 'まっすぐ走る運動',
       dim: 1, orientation: 'landscape', hodoMode: 'stair',
-      intervalSec: 0.10, count: 10, cutoutRadius: 18, hue: 330,
+      /* count は作図で使う点の数の目安。一次元は少なくてよい——規則性は
+         3組で見え、点を減らすほど矢印が長くなって描きやすい。 */
+      intervalSec: 0.10, count: 6, cutoutRadius: 18, hue: 330,
       shootTips: ['机の縁で走らせて、背景を壁にすると影が落ちにくくなります。'],
       predictions: [{
         q: '台車の加速度はどちらを向くと思いますか？',
@@ -60,7 +62,7 @@
             'どちらも加速度一定ですが、Δv の向きが鉛直下向きか斜面平行かで異なります。',
       sub: '投げ上げた球の運動',
       dim: 2, orientation: 'landscape', hodoMode: 'all',
-      intervalSec: 0.08, count: 10, cutoutRadius: 18, hue: 330,
+      intervalSec: 0.08, count: 7, cutoutRadius: 18, hue: 330,
       sampleKey: 'projectile', sample: 'samples/projectile.webm', sampleNote: '合成（動作確認用）',
       shootTips: ['バウンドの前後は加速度が桁違いに大きくなります。' +
                   '**トリムで放物線を一つだけ切り出してください。**'],
@@ -76,7 +78,8 @@
       note: '端では速度がゼロでも Δv は残り、接線方向を向きます。ホドグラフは原点を通る弧になります。',
       sub: '糸につるして振らせる運動',
       dim: 2, orientation: 'landscape', hodoMode: 'pair',
-      intervalSec: 0.10, count: 10, cutoutRadius: 18, hue: 330,
+      /* 振り子は折り返しの前後を入れたいので、少なすぎると肝心の点が落ちる */
+      intervalSec: 0.10, count: 8, cutoutRadius: 18, hue: 330,
       shootTips: ['端では動きが遅く、コマ間隔を小さくすると変位が 1mm 程度になって' +
                   'ノイズに埋もれます。開始コマを少しずつずらして、' +
                   '**端のコマがサンプル点に一致するように**合わせてください。',
@@ -102,7 +105,7 @@
       note: '常につり合いの位置を向き、変位に比例して長くなります。ホドグラフは線分を往復します。',
       sub: '上下に振動する運動',
       dim: 1, orientation: 'portrait', hodoMode: 'stair',
-      intervalSec: 0.06, count: 12, cutoutRadius: 18, hue: 330,
+      intervalSec: 0.06, count: 8, cutoutRadius: 18, hue: 330,
       shootTips: ['縦画面で撮ってください。',
                   'トリムは**端の少し手前から、反対の端の少し先まで**。' +
                   '端から端でぴったり切ると、いちばん見たい端の点に矢印が出ません' +
@@ -125,7 +128,8 @@
       note: '常に中心向きです。ホドグラフが円になる＝速度もまた円運動している、という関係も見どころです。',
       sub: '回転する円板上の運動',
       dim: 2, orientation: 'landscape', hodoMode: 'pair',
-      intervalSec: 0.07, count: 12, cutoutRadius: 16, hue: 330,
+      /* 円運動は回転が見えないと「中心を向く」が偶然に見える。少し多めに取る */
+      intervalSec: 0.07, count: 8, cutoutRadius: 16, hue: 330,
       sampleKey: 'circle', sample: 'samples/circle.webm', sampleNote: '合成（動作確認用）',
       /* shootTips は解析の前に出る。答え（どちらを向くか）は書かないこと */
       shootTips: ['撮影面が平行でないと軌道が楕円に写り、加速度の向きが正しく出ません。' +
@@ -146,7 +150,7 @@
       note: '自分でお題を選んだ場合、予測が外れる確率はプリセットより高くなります。',
       sub: 'プリセットなし。何でも測れます',
       dim: 2, orientation: 'landscape', hodoMode: 'pair',
-      intervalSec: 0.10, count: 10, cutoutRadius: 18, hue: 330,
+      intervalSec: 0.10, count: 8, cutoutRadius: 18, hue: 330,
       freeDraw: true,          // 四択ではなく、矢印を1本描かせる
       shootTips: ['守るルールは一つだけ：**カメラを固定して、運動面と平行に撮る。**'],
       /* 自由モードでは固定の四択は作れない。それでも予測は残す。

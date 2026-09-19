@@ -64,6 +64,7 @@
     holding: false,     // 着地した Δv を見せる間を取っている最中
     handleMoved: false, // ④でハンドルに一度でも触れたか
     trackCrop: null,    // ③④のあいだ預かっておく、軌道に合わせたクロップ
+    cropSaved: false,   // 退避したか（クロップ無しの状態も退避対象なので真偽値で持つ）
     advanced: false     // 発展：別枠（ホドグラフ）を表示中
   };
 
@@ -199,7 +200,23 @@
     const b = HG.view.crop;
     if (b) { add(b.x, b.y); add(b.x + b.w, b.y + b.h); }
     const m = Math.max(x1 - x0, y1 - y0) * 0.10;       // 持ち上げの弧と名札のぶん
-    return { x: x0 - m, y: y0 - m, w: (x1 - x0) + 2 * m, h: (y1 - y0) + 2 * m };
+    let x = x0 - m, y = y0 - m, w = (x1 - x0) + 2 * m, h = (y1 - y0) + 2 * m;
+
+    /* 細すぎる／平たすぎるときは短い方を広げる（「軌道に合わせる」と同じ歯止め）。
+       これが無いと、自由落下のような縦一直線の運動で縦横比 0.2 のような
+       極端に細い表示になり、指で触れない幅になる。 */
+    const MIN_ASPECT = 0.38;
+    if (w / h < MIN_ASPECT) { const nw = h * MIN_ASPECT; x -= (nw - w) / 2; w = nw; }
+    if (h / w < MIN_ASPECT) { const nh = w * MIN_ASPECT; y -= (nh - h) / 2; h = nh; }
+
+    /* **動画の外へはみ出させないこと。** 折り返し点は軌道の外へ1ステップぶん
+       出るので、素直に外接矩形を取ると簡単に画面の外へ出る。はみ出した範囲を
+       背景の描画へ渡すと、ブラウザによっては背景だけがずれる（実機で発生）。 */
+    const W = HG.state.video.width, H = HG.state.video.height;
+    w = Math.min(w, W); h = Math.min(h, H);
+    x = Math.max(0, Math.min(W - w, x));
+    y = Math.max(0, Math.min(H - h, y));
+    return { x: x, y: y, w: w, h: h };
   }
 
   /** 最後の組かどうか */
@@ -440,12 +457,18 @@
     S.fade = (step === 3 || step === 4) ? 0.35 : 0;
 
     if (step === 3 || step === 4) {
-      /* 折り返し点が軌道の外へ出るぶん、表示範囲を広げておく */
-      if (!S.trackCrop && HG.view.crop) S.trackCrop = HG.view.crop;
+      /* 折り返し点が軌道の外へ出るぶん、表示範囲を広げておく。
+         **クロップが無い状態も退避すること。**「あるときだけ退避」にすると、
+         「軌道に合わせる」を押さずに作図へ入った場合に戻す先が無くなり、
+         ③④用の表示範囲が⑤まで残る（実機で発生）。 */
+      if (!S.cropSaved) { S.trackCrop = HG.view.crop; S.cropSaved = true; }
       const c = pairViewCrop();
       if (c) HG.coords.setCrop(c);
     } else {
-      if (S.trackCrop) { HG.coords.setCrop(S.trackCrop); S.trackCrop = null; }
+      if (S.cropSaved) {
+        HG.coords.setCrop(S.trackCrop);
+        S.trackCrop = null; S.cropSaved = false;
+      }
       S.aligned = false; S.slide = -1;
     }
     /* ④は短い調整の連続なので、拡大鏡は長押しを待たずに出す */
@@ -484,6 +507,9 @@
       return;
     }
     S.advanced = false;
+    L.dv = true;
+    { const e1 = $('#hodoDv'); if (e1) e1.checked = true;
+      const e2 = $('#lyDv'); if (e2) e2.checked = true; }
     {
       if (S.savedCrop) { HG.coords.setCrop(S.savedCrop); S.savedCrop = null; }
       S.fade = 0;
@@ -501,34 +527,64 @@
    */
   function collectToHodo() {
     S.advanced = false; S.collecting = true; S.t = 0;
-    const dur = S.fastAnim ? 450 : 1000;
+    /* 一本ずつ出すぶん、全体は長めに取る */
+    const dur = S.fastAnim ? 700 : 1600;
     const t0 = performance.now();
     updateUI();
     (function tick() {
       S.t = Math.min(1, (performance.now() - t0) / dur);
-      S.fade = 0.86 * S.t;
+      /* **背景を薄くするのは最後だけ。** 最初から薄くすると、後半の矢印が
+         出発するころには出発点が消えていて、位置と速度の対応が見えない。 */
+      S.fade = 0.86 * Math.max(0, (S.t - 0.72) / 0.28);
       HG.stage.render();
       if (S.t < 1) requestAnimationFrame(tick);
       else {
         S.collecting = false; S.advanced = true; S.fade = 0.86;
+        /* まず速度ベクトルの先端が描く形（円運動なら円、斜方投射なら鉛直線）
+           を見せる。Δv は生徒が重ねる。最初から乗っていると形が読めない。 */
+        L.dv = false;
+        const el = $('#hodoDv'); if (el) el.checked = false;
+        const el2 = $('#lyDv'); if (el2) el2.checked = false;
         updateUI(); HG.stage.render();
       }
     })();
   }
 
-  /** 集まる途中の絵。矢印が軌道上の位置から別枠の原点へ滑る */
+  /**
+   * 集まる途中の絵。**一本ずつ、少しずつ重ねて出発させる。**
+   * 全部同時に滑らせると、どの矢印がどの点から出たのか追えない。
+   * 斜方投射の「頂点の速度が水平で、ホドグラフでは鉛直線の真ん中に来る」
+   * という対応こそ見せたい場所なので、ここは同時にしないこと。
+   * 完全な逐次だと間延びするので、少しずつずらして重ねる。
+   */
   function paintCollect(ctx) {
     const p = pts(), t = S.t, n = HG.drawing.counts().n;
-    const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    const m = Math.max(1, n - 1);
+    const step = m > 1 ? 0.62 / (m - 1) : 0;   // 出発をずらす間隔
+    const span = 0.38;                          // 1本が飛んでいる長さ
     const s1 = HG.hodo.scale();
-    for (let k = 0; k < n - 1; k++) {
+    for (let k = 0; k < m; k++) {
       const v = HG.drawing.velocity(k);
       if (!v || !p[k]) continue;
+      const raw = Math.max(0, Math.min(1, (t - k * step) / span));
+      const e = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
       const o = HG.hodo.originFor(k);
-      const tail = { x: p[k].x + (o.x - p[k].x) * ease, y: p[k].y + (o.y - p[k].y) * ease };
-      const sc = 1 + (s1 - 1) * ease;
+      const tail = { x: p[k].x + (o.x - p[k].x) * e, y: p[k].y + (o.y - p[k].y) * e };
+      const sc = 1 + (s1 - 1) * e;
       const a = C(tail.x, tail.y), b = C(tail.x + v.dx * sc, tail.y + v.dy * sc);
-      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y, { color: COLORS.vel, width: 3, head: 10 });
+
+      /* 飛んでいるあいだ、出発点を光らせる。これが「位置と速度の対応」の本体 */
+      if (raw > 0 && raw < 1) {
+        const src = C(p[k].x, p[k].y);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(11,107,203,.9)';
+        ctx.lineWidth = 2.5 * HG.view.dpr;
+        ctx.beginPath(); ctx.arc(src.x, src.y, 13 * HG.view.dpr, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+      HG.arrows.draw(ctx, a.x, a.y, b.x, b.y,
+        { color: COLORS.vel, width: 3, head: 10, alpha: raw > 0 ? 1 : 0.4 });
+      if (raw >= 1) label(ctx, b, 'v' + k, '#0a7a3c');
     }
   }
 
@@ -1140,7 +1196,7 @@
        そのままでは向きが斜めに見える（自由落下なら本当は鉛直）。
        斜めの線は補助線（細い破線）にして、段差を引いた本当の Δv を実線で描く。 */
     const stairGap = HG.hodo.stairGap();
-    d.deltaVVectors.forEach((v, k) => {
+    if (L.dv) d.deltaVVectors.forEach((v, k) => {
       if (!v || !HG.hodo.visible(k) || !HG.hodo.visible(k + 1)) return;
       const t = HG.hodo.tip(k);
       if (!t) return;
@@ -1161,7 +1217,7 @@
     });
 
     /* ⑥まで来ていれば、別枠でも自動算出を重ねる */
-    if (S.step >= 6) {
+    if (S.step >= 6 && L.dv) {
       for (let k = 0; k < n - 2; k++) {
         if (!HG.hodo.visible(k) || !HG.hodo.visible(k + 1)) continue;
         const ref = HG.drawing.autoDeltaV(k);
@@ -1439,7 +1495,7 @@
     S.on = true; S.checked = false;
     S.pair = 0; S.aligned = false; S.slide = -1; S.settle = -1;
     S.handle = null; S.advanced = false; S.focus = -1;
-    S.trackCrop = null; S.holding = false; S.collecting = false;
+    S.trackCrop = null; S.cropSaved = false; S.holding = false; S.collecting = false;
     S.auto = ($('#drawMode').value === 'auto');
     document.body.classList.add('drawing');   // 作図中は他のカードを畳む
     const pred = HG.state.drawing.prediction;
@@ -1682,6 +1738,11 @@
     $('#restPairs').onclick = runRest;
     $('#checkBtn').onclick = check;
     $('#advBtn').onclick = () => setAdvanced(!S.advanced);
+    $('#hodoDv').onchange = e => {
+      L.dv = e.target.checked;
+      const el = $('#lyDv'); if (el) el.checked = L.dv;
+      HG.stage.render();
+    };
     $('#fillRest').onclick = () => {
       if (S.step === 1) HG.drawing.fillPositions();
       else HG.drawing.fillVelocities();

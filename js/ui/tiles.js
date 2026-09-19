@@ -30,8 +30,11 @@
     t.target = { h: preset.hue, s: 0.6, v: 0.6 };
     t.markerStart = null;
     HG.state.strobe.cutoutRadius = preset.cutoutRadius;
-    /* 点の数は間隔から決まるので、preset.count は使わない。
-       上限は既定（24点）のままにしておく。 */
+    /* 点の数はプリセットの目安を流し込む。以前は「間隔から決まるので使わない」と
+       していたが、逐次方式＋実寸で描くようになってからは点の数がそのまま
+       1本あたりの矢印の長さになるので、運動ごとに適した数が違う。
+       生徒はあとからスライダーで動かせる（プリセットの正体は初期値）。 */
+    if (preset.count) HG.state.selection.count = preset.count;
     HG.hodo.setMode(preset.hodoMode);
     const sel = $('#hodoMode'); if (sel) sel.value = preset.hodoMode;
     $('#selCount').value = HG.state.selection.count;

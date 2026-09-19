@@ -81,13 +81,23 @@
        壊れる。ここを view.scale から作っておけば、その場合も背景と点は必ず
        一致し、余った領域は単に背景色のまま残る。
        実測：1050x90 のクロップで、直すまで縦に 9px ずれていた。 */
-    const dw = a.w * HG.view.scale, dh = a.h * HG.view.scale;
-    if (source) {
-      const k = sourceScale;
-      ctx.drawImage(source, a.x * k, a.y * k, a.w * k, a.h * k, 0, 0, dw, dh);
-    } else {
-      HG.frames.drawToOffscreen();
-      ctx.drawImage(HG.frames.offscreen, a.x, a.y, a.w, a.h, 0, 0, dw, dh);
+    let img, k;
+    if (source) { img = source; k = sourceScale; }
+    else { HG.frames.drawToOffscreen(); img = HG.frames.offscreen; k = 1; }
+
+    /* **元画像からはみ出した範囲は自前で切り、描き先もそのぶんずらす。**
+       はみ出した範囲をそのまま drawImage へ渡すと、元と描き先を比例して切る
+       ブラウザと、元だけ切って描き先いっぱいに伸ばすブラウザがあり、後者では
+       背景だけがずれる。iPhone の Safari で実際に起きた（③④で表示範囲を
+       広げたとき、その範囲が動画の外へ出ていた）。
+       ルーペでも同じ種類の不具合を踏んでいる。範囲を渡す前に自分で切ること。 */
+    const sx = a.x * k, sy = a.y * k, sw = a.w * k, sh = a.h * k;
+    const ax = Math.max(0, sx), ay = Math.max(0, sy);
+    const bx = Math.min(img.width, sx + sw), by = Math.min(img.height, sy + sh);
+    if (bx > ax && by > ay) {
+      const r = HG.view.scale / k;        // 元画像の1px → キャンバスの何px
+      ctx.drawImage(img, ax, ay, bx - ax, by - ay,
+        (ax - sx) * r, (ay - sy) * r, (bx - ax) * r, (by - ay) * r);
     }
     painters.forEach(p => {
       try { p(ctx); } catch (e) { console.error('[painter]', e); }
