@@ -71,7 +71,7 @@
   /* ⑥で軌道の上に何を描くか。
      「別枠で作った Δv が、突然そこに現れる」ように見えるのを避けるため、
      既定で速度も一緒に出す。速度（接線）と Δv の関係がその場で読める。 */
-  const L = { pos: false, vel: true, dv: true, pred: true };
+  const L = { pos: false, vel: true, dv: true, pred: true, ray: false };
 
   const COLORS = {
     pos: '#0b6bcb', vel: '#12a150', dv: '#ff7a00',
@@ -477,8 +477,8 @@
     /* ⑤に入ったときの既定は「Δv だけ」。ただしレイヤーの切り替えは出したまま
        にして、速度ベクトルを戻せるようにする（消しっぱなしにしない）。 */
     if (step === 5 && from === 4) {
-      L.pos = false; L.vel = false; L.dv = true; L.pred = false;
-      ['pos', 'vel', 'dv', 'pred'].forEach(key => {
+      L.pos = false; L.vel = false; L.dv = true; L.pred = false; L.ray = false;
+      ['pos', 'vel', 'dv', 'pred', 'ray'].forEach(key => {
         const el = $('#ly' + key.charAt(0).toUpperCase() + key.slice(1));
         if (el) el.checked = L[key];
       });
@@ -938,9 +938,53 @@
 
     if (fin) {
       if (L.pred) paintPrediction(ctx, 'track');
+      if (L.dv && L.ray && S.focus < 0) paintRays(ctx);   // 矢印より先＝下敷きに
       if (L.dv) paintBackDraw(ctx);
       if (S.step === 6 && S.focus < 0) paintAutoOnTrack(ctx);
     }
+  }
+
+  /**
+   * Δv の延長線（破線）。
+   *
+   * 実寸で描くと Δv は短いので、8本が内側を向いていても「だいたい内向き」
+   * までしか言えない。延長すると**一点で交わる**のが見え、その点が軌道の
+   * 円の中心と重なる。「だいたい内向き」が「まさに中心」に変わる。
+   *
+   * 矢印を伸ばすのではなく補助線を伸ばすので、大きさについて嘘をつかない。
+   * 斜方投射で出すと延長線が全部平行になり、**交わらない**ことが見える。
+   * 円運動と並べたときの対比がそのまま教材になるので、円運動専用にしない。
+   *
+   * **交点に印は付けないこと。** 中心は生徒が見つけるもので、線が集まって
+   * いるのを見て「ここだ」と言うところまでが授業の中身。
+   */
+  function paintRays(ctx) {
+    const p = pts(), n = HG.drawing.counts().n;
+    const off = listOffset();
+    const ar = HG.coords.area();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(120,130,140,.55)';
+    ctx.lineWidth = 1.5 * HG.view.dpr;
+    ctx.setLineDash([5 * HG.view.dpr, 5 * HG.view.dpr]);
+    for (let i = 0; i < n - 2; i++) {
+      const v = HG.state.drawing.deltaVVectors[i] || HG.drawing.autoDeltaV(i);
+      const at0 = p[HG.drawing.posIndexOfDeltaV(i)];
+      if (!v || !at0) continue;
+      const len = Math.hypot(v.dx, v.dy);
+      if (len < 1e-6) continue;                   // 等速では向きが決まらないので引かない
+      const ox = at0.x + off.x, oy = at0.y + off.y;
+      const ux = v.dx / len, uy = v.dy / len;
+      /* 表示範囲の縁まで伸ばす */
+      let tmax = Infinity;
+      if (ux > 1e-9) tmax = Math.min(tmax, (ar.x + ar.w - ox) / ux);
+      if (ux < -1e-9) tmax = Math.min(tmax, (ar.x - ox) / ux);
+      if (uy > 1e-9) tmax = Math.min(tmax, (ar.y + ar.h - oy) / uy);
+      if (uy < -1e-9) tmax = Math.min(tmax, (ar.y - oy) / uy);
+      if (!isFinite(tmax) || tmax <= 0) continue;
+      const a = C(ox, oy), b = C(ox + ux * tmax, oy + uy * tmax);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    ctx.restore();
   }
 
   /**
@@ -1759,9 +1803,10 @@
     };
     $('#hodoMode').onchange = e => { HG.hodo.setMode(e.target.value); done(); };
     $('#pairSlider').oninput = e => { HG.hodo.setPair(+e.target.value); done(); };
-    ['pos', 'vel', 'dv', 'pred'].forEach(key => {
+    ['pos', 'vel', 'dv', 'pred', 'ray'].forEach(key => {
       const id = '#ly' + key.charAt(0).toUpperCase() + key.slice(1);
-      $(id).onchange = e => { L[key] = e.target.checked; HG.stage.render(); };
+      const el = $(id);
+      if (el) el.onchange = e => { L[key] = e.target.checked; HG.stage.render(); };
     });
     $('#focusOn').onchange = e => {
       /* ④のペア送りで見ていた組をそのまま引き継ぐ */
