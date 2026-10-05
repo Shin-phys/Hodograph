@@ -275,11 +275,15 @@
     const rest = leftover();
     const dt = p.length > 1 ? (p[1].t - p[0].t) : 0;
     const capped = (p.length >= s.count);
-    HG.dom.text('#selInfo', p.length
-      ? '区間 ' + span + ' コマ／' + s.interval + ' コマおき → ' + p.length + ' 点' +
-        (capped ? '（上限で打ち切り。残り ' + rest + ' コマは未使用）'
-                : rest ? '（余り ' + rest + ' コマは使いません）' : '') +
-        '／点の間隔 ' + (dt * 1000).toFixed(0) + ' ms'
+    /* 「点が区間の最初から最後まで行き渡っているか」をここで言う。
+       ステップ4で生徒に確かめてほしいのはこれ。 */
+    const reach = rest <= Math.max(1, s.interval * 0.6);
+    HG.dom.html('#selInfo', p.length
+      ? '区間 ' + span + ' コマ／' + s.interval + ' コマおき → <b>' + p.length + ' 点</b>' +
+        '／点の間隔 ' + (dt * 1000).toFixed(0) + ' ms<br>' +
+        (reach ? '<span class="ok">最後の点が区間の終わりまで来ています。</span>'
+               : '<span class="warn">終わりの ' + rest + ' コマが余っています。' +
+                 '点の数を変えるか、トリムし直してください。</span>')
       : '座標のあるコマがありません。先に追跡か手動打点をしてください。');
   }
 
@@ -303,24 +307,23 @@
     const f = HG.points.listInTrim();
     if (f.length < 4) { HG.dom.text('#selSuggest', ''); return; }
     const g = suggest();
+    /* **「推奨の間隔」は出さない。** 点の数から間隔を逆算するようになったので、
+       別の間隔を勧めても押せないし、推奨は精度だけを見ていて「点が運動の
+       途中で終わる」ことを気にしていなかった。残すのは精度の数字だけ。 */
     if (!userTouched) {
-      sel().interval = g.interval;
-      sel().offset = 0;
+      setCount(sel().count);
       apply();
     }
     const cur = current();
     HG.dom.html('#selSuggest',
-      '推奨：' + g.interval + ' コマおき（向きの不確かさ ±' + g.angle.toFixed(0) +
-      '°／荒れるコマで ±' + g.angleWorst.toFixed(0) + '°）' +
-      '<br>いまの ' + sel().interval + ' コマおき：<b>±' + cur.angle.toFixed(0) +
-      '°／荒れるコマで ±' + cur.angleWorst.toFixed(0) + '°</b>' +
-      '（ジッタ ' + g.jitter.toFixed(2) + ' px、荒れるコマ ' + g.jitterHigh.toFixed(2) + ' px）' +
+      'いまの ' + sel().count + ' 点（' + sel().interval + ' コマおき）：<b>Δv の向きの不確かさ ±' +
+      cur.angle.toFixed(0) + '°／荒れるコマで ±' + cur.angleWorst.toFixed(0) + '°</b>' +
       (cur.angleWorst > 45
-        ? '<br><span class="warn">荒れるコマでのばらつきが大きすぎます。この間隔だと、' +
-          'ブレたコマの矢印が逆を向くことがあります。間隔を広げてください。</span>'
+        ? '<br><span class="warn">荒れるコマでのばらつきが大きすぎます。このままだと、' +
+          'ブレたコマの矢印が逆を向くことがあります。点の数を減らしてください。</span>'
         : cur.angle > 15
-          ? '<br><span class="warn">⑤の判定は ±15° です。この間隔では自動算出側の' +
-            'ばらつきが判定幅を超えます。間隔を広げるか、スローで撮り直してください。</span>'
+          ? '<br><span class="warn">⑥の判定は ±15° です。この点数では自動算出側の' +
+            'ばらつきが判定幅を超えます。点の数を減らすか、スローで撮り直してください。</span>'
           : '') +
       (g.accWeak ? '<br>この素材では、どの間隔でも Δv がジッタと同じくらいの大きさにとどまります。' +
                    '間隔を変えても改善しない場合は、素材の側の性質です。' : ''));
@@ -405,7 +408,7 @@
              atEdge: atEdge, bothEdgesSlow: both };
   }
 
-  /** 外から間隔を決める（自動描写モードの「間隔を広げる」）。手動で触ったのと同じ扱いにする */
+  /** 外から間隔を決める。手動で触ったのと同じ扱いにする */
   function setIntervalTo(n) {
     userTouched = true;
     sel().interval = Math.max(1, Math.round(n));
@@ -413,21 +416,57 @@
     commit();
   }
 
+  /**
+   * **点の数が主、間隔は従。**
+   *
+   * 作図で決めたいのは「何点使うか」であって「何コマおきか」ではない。
+   * しかも実寸で描くので、**点の間隔がそのまま矢印の長さ**になる。
+   * 点の数から間隔を逆算すれば、点は必ずトリム区間の最初から最後までに
+   * 行き渡り、最後の点が運動の終わりに来る。微調整が要らなくなる。
+   *
+   * 以前は間隔が主で、点の数は「上限」だった。その設計だと、推奨された間隔が
+   * 運動の途中で終わってしまい、生徒が自分で間隔を詰め直すことになっていた。
+   */
+  function setCount(n) {
+    const g = trimRange();
+    const want = Math.max(3, Math.round(n));
+    const span = Math.max(1, g.hi - g.lo);
+
+    /* 間隔は整数コマなので、span / (want-1) をそのまま丸めると端数が出て、
+       最後の点が区間の終わりまで届かない（29コマで7点にすると、間隔5で
+       6点・3コマ余り、という実測）。
+       そこで候補の間隔を総当たりし、**余りを最優先、次に希望の点数との差**で
+       選ぶ。希望が7点でも、8点なら余り0で収まるならそちらを採る。
+       点の数は結果の値に合わせて書き戻すので、表示は実際の点数になる。 */
+    let best = null;
+    for (let m = 1; m <= span; m++) {
+      const cnt = Math.floor(span / m) + 1;
+      if (cnt < 3) break;
+      if (Math.abs(cnt - want) > 1) continue;
+      const rest = span - m * (cnt - 1);
+      const score = rest + 2 * Math.abs(cnt - want);
+      if (!best || score < best.score) best = { m: m, cnt: cnt, score: score };
+    }
+    if (!best) {
+      const m = Math.max(1, Math.round(span / (want - 1)));
+      best = { m: m, cnt: Math.min(want, Math.floor(span / m) + 1) };
+    }
+    sel().interval = best.m;
+    sel().count = best.cnt;
+    sel().offset = 0;
+    return sel().interval;
+  }
+
+  function setCountTo(n) { userTouched = true; setCount(n); commit(); }
+
   function attach() {
     $('#selInterval').oninput = e => { userTouched = true; sel().interval = +e.target.value; apply(); };
     $('#selInterval').onchange = commit;
     $('#selOffset').oninput = e => { userTouched = true; sel().offset = +e.target.value; apply(); };
     $('#selOffset').onchange = commit;
-    $('#selCount').oninput = e => { userTouched = true; sel().count = +e.target.value; apply(); };
+    $('#selCount').oninput = e => { userTouched = true; setCount(+e.target.value); apply(); };
     $('#selCount').onchange = commit;
     $('#showPreview').onchange = e => { preview = e.target.checked; HG.refresh(); };
-    $('#useSuggest').onclick = () => {
-      userTouched = true;
-      const g = suggest();
-      sel().interval = g.interval;
-      sel().offset = 0;
-      commit();
-    };
 
     HG.bus.on('points:changed', showSuggestion);
     HG.bus.on('trim:changed', () => { if (active) apply(); else showSuggestion(); });
@@ -435,5 +474,5 @@
 
   HG.selection = { attach, list, isActive, suggest, current, jitterStats, revisits, turningPoint,
                    leftover, drawPreview, apply, commit, refreshLabels,
-                   setInterval: setIntervalTo };
+                   setInterval: setIntervalTo, setCount: setCountTo };
 })(window.HG = window.HG || {});

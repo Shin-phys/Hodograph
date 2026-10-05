@@ -1422,7 +1422,7 @@
         const q = HG.selection.current();
         if (!degenerate() && q.angle > 25) {
           extra += '　※この間隔では Δv の向きの不確かさが ±' + q.angle.toFixed(0) +
-                   '° あります。いったん作図をやめてコマ間隔を広げると読みやすくなります。';
+                   '° あります。いったん作図をやめて点の数を減らすと読みやすくなります。';
         }
       }
       hint(st.hint + extra);
@@ -1703,17 +1703,18 @@
     const cur = HG.selection.current();
     const g = HG.selection.suggest();
     const now = HG.state.selection.interval;
+    const nowN = HG.state.selection.count;
 
     /* しきい値は甘めに取ってある。荒れるコマの見積もりは
        安全側（実測よりも悪く出る）なので、そのまま警告にすると鳴りすぎる。 */
     const verdict = cur.angleWorst <= 25
-      ? '<span class="ok">この間隔なら向きは読めます。</span>'
+      ? '<span class="ok">この点数なら向きは読めます。</span>'
       : cur.angleWorst <= 60
         ? '<span class="warn">おおむね読めますが、ブレの大きいコマでは矢印が斜めに転ぶことがあります。</span>'
-        : '<span class="warn">この素材とこの間隔では、矢印が逆を向くことがあります。間隔を広げてください。</span>';
+        : '<span class="warn">この素材とこの点数では、矢印が逆を向くことがあります。点の数を減らしてください。</span>';
 
     HG.dom.html('#autoQuality',
-      'いまの ' + now + ' コマおき：加速度の向きの不確かさ <b>±' + cur.angle.toFixed(0) +
+      'いまの ' + nowN + ' 点（' + now + ' コマおき）：加速度の向きの不確かさ <b>±' + cur.angle.toFixed(0) +
       '°</b>（荒れるコマで ±' + cur.angleWorst.toFixed(0) + '°）<br>' + verdict);
 
     /* 折り返し点が区間の端にあると、いちばん見せたい矢印だけが出ない。
@@ -1737,10 +1738,22 @@
         '振り子やバネなら端から端まで、円運動なら1周の半分ほどが読みやすい範囲です。');
     }
 
-    if (g.interval > now) {
-      btn.classList.remove('hide');
-      btn.textContent = '間隔を ' + g.interval + ' コマおきに広げる（±' +
-                        g.angleWorst.toFixed(0) + '° になります）';
+    /* 点の数を減らすと、間隔が広がって Δv の向きの精度が上がる。
+       （間隔を n 倍にすると Δv は n² 倍になるのにジッタは変わらない）
+       言い方は「点を減らす」に揃える——スライダーが点の数になったので、
+       「間隔を広げる」と言われても対応する操作が無い。 */
+    const g2 = HG.selection.suggest();
+    if (g2.interval > now) {
+      const span = HG.points.listInTrim().length - 1;
+      const want = Math.max(3, Math.floor(span / g2.interval) + 1);
+      if (want < nowN) {
+        btn.classList.remove('hide');
+        btn.textContent = '点を ' + want + ' 点に減らす（±' +
+                          g2.angleWorst.toFixed(0) + '° になります）';
+        btn.dataset.want = want;
+      } else {
+        btn.classList.add('hide');
+      }
     } else {
       btn.classList.add('hide');
     }
@@ -1758,8 +1771,9 @@
     $('#drawExit').onclick = stop;
     $('#autoNext').onclick = autoNext;
     $('#drawMode').onchange = e => { S.auto = (e.target.value === 'auto'); updateAutoPanel(); };
-    $('#autoWiden').onclick = () => {
-      HG.selection.setInterval(HG.selection.suggest().interval);
+    $('#autoWiden').onclick = e => {
+      const want = +(e.target.dataset.want || 0);
+      if (want >= 3) HG.selection.setCount(want);
       updateAutoPanel();
     };
     HG.bus.on('selection:changed', updateAutoPanel);

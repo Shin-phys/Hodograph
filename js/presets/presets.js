@@ -35,11 +35,11 @@
   const PRESETS = [
     {
       id: 'cart',
-      name: '台車の等速・等加速度運動',
+      name: '一次元運動',
       /* note は「解説」。結果が出るまで画面に出さない（⑤以降で開く） */
       note: 'Δv がゼロでもベクトルであることに注目。斜面なら Δv は斜面に平行になり、' +
             '「重力は下向きなのに加速度は斜面方向」という分力の話に、ホドグラフから入れます。',
-      sub: 'まっすぐ走る運動',
+      sub: '台車の運動や自由落下など、直線の軌道を描く運動。ばね振動は専用のモードがあります',
       dim: 1, orientation: 'landscape', hodoMode: 'stair',
       /* count は作図で使う点の数の目安。一次元は少なくてよい——規則性は
          3組で見え、点を減らすほど矢印が長くなって描きやすい。 */
@@ -57,10 +57,10 @@
     },
     {
       id: 'projectile',
-      name: 'スーパーボールの斜方投射',
+      name: '二次元運動',
       note: '全コマで真下を向き、長さが同じになります。斜面の台車と対比させる価値があります。' +
             'どちらも加速度一定ですが、Δv の向きが鉛直下向きか斜面平行かで異なります。',
-      sub: '投げ上げた球の運動',
+      sub: '斜方投射や2物体の衝突など、x軸とy軸がある運動。振り子は専用のモードがあります',
       dim: 2, orientation: 'landscape', hodoMode: 'all',
       intervalSec: 0.08, count: 7, cutoutRadius: 18, hue: 330,
       sampleKey: 'projectile', sample: 'samples/projectile.webm', sampleNote: '合成（動作確認用）',
@@ -124,9 +124,9 @@
     },
     {
       id: 'circle',
-      name: 'ターンテーブルの円運動',
+      name: '円運動',
       note: '常に中心向きです。ホドグラフが円になる＝速度もまた円運動している、という関係も見どころです。',
-      sub: '回転する円板上の運動',
+      sub: 'ターンテーブルなど、加速度が向きを変え続ける運動',
       dim: 2, orientation: 'landscape', hodoMode: 'pair',
       /* 円運動は回転が見えないと「中心を向く」が偶然に見える。少し多めに取る */
       intervalSec: 0.07, count: 8, cutoutRadius: 16, hue: 330,
