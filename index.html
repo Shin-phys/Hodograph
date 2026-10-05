@@ -208,7 +208,7 @@
     <div class="sub mono spaced" id="ptLabel"></div>
   </div>
 
-  <div class="card card-tool">
+  <div class="card card-tool" id="selectCard">
     <h2>使うコマ（等間隔）</h2>
     <div class="slider">
       <label>使う点の数 <span class="mono" id="selCountVal">7 点</span></label>
@@ -236,7 +236,7 @@
     </details>
   </div>
 
-  <div class="card card-tool">
+  <div class="card card-tool" id="strobeCard">
     <h2>ストロボ画像</h2>
     <div class="row tight">
       <select id="strobeMethod" class="grow">
@@ -270,6 +270,20 @@
     <div class="row tight spaced hide" id="toVectors">
       <button id="goVectors" class="grow">このままベクトルも描いてみますか？</button>
     </div>
+  </div>
+
+  <!-- 加速度探究モード専用。自動描写だけをする道具なので、作図カードは出さない -->
+  <div class="card" id="exploreCard">
+    <h2>加速度ベクトル</h2>
+    <div class="sub spaced-sm" id="exploreInfo"></div>
+    <div class="row tight spaced">
+      <button id="exploreGo" class="primary grow">次へ（加速度ベクトルを描く）</button>
+      <button id="exploreAgain" class="ghost hide grow">もう一度見る</button>
+    </div>
+    <div class="row tight spaced hide" id="exploreAfter">
+      <button id="exploreDetail" class="grow">詳しい解析へ（自分で作図する）</button>
+    </div>
+    <div id="exploreReveal" class="reveal hide"></div>
   </div>
 
   <div class="card" id="drawCard">

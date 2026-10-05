@@ -51,6 +51,17 @@ ul.guide{margin:6px 0 0 -8px; padding-left:20px;}
 ul.ideas{margin:6px 0 10px -8px; padding-left:20px; columns:2; font-size:13px; color:var(--sub);}
 ul.ideas li{margin:2px 0; break-inside:avoid;}
 
+/* ===== 加速度探究モード =====
+   作図はさせないので作図カードは出さない。代わりに専用カードを出す。
+   **body.drawing でも「使うコマ」とストロボのカードは畳まないこと。**
+   スライダーを動かすと加速度ベクトルが即時に描き直る、という往復が
+   このモードの本体で、畳むとその往復ができなくなる。 */
+#exploreCard{display:none;}
+body.mode-explore #exploreCard{display:block;}
+body.mode-explore #drawCard{display:none;}
+body.mode-explore.drawing #selectCard,
+body.mode-explore.drawing #strobeCard{display:block;}
+
 /* ストロボ画像だけを作るモードでは、追跡・打点・作図を出さない */
 body.mode-strobe #trackCard,
 body.mode-strobe #pointCard,

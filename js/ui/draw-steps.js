@@ -65,7 +65,12 @@
     handleMoved: false, // ④でハンドルに一度でも触れたか
     trackCrop: null,    // ③④のあいだ預かっておく、軌道に合わせたクロップ
     cropSaved: false,   // 退避したか（クロップ無しの状態も退避対象なので真偽値で持つ）
-    advanced: false     // 発展：別枠（ホドグラフ）を表示中
+    advanced: false,    // 発展：別枠（ホドグラフ）を表示中
+
+    /* 加速度探究モード */
+    explore: false,     // 探究モードで走っているか
+    exploreShown: false,// この動画でアニメーションを見せ終えたか
+    exploreGen: 0       // 描写の世代。スライダーで作り直したら古い駆動を捨てる
   };
 
   /* ⑥で軌道の上に何を描くか。
@@ -264,6 +269,8 @@
 
   /* ---------- 入力（タップ／ドラッグを同じ結果にする） ---------- */
   function handle(p) {
+    /* 探究モードは見るだけ。キャンバスのタップは拾わない */
+    if (S.explore) return;
     if (!S.on) return;
 
     /* 自由測定の予測：矢印を1本描いたら作図へ進む */
@@ -443,6 +450,14 @@
     }
   }
 
+  /** レイヤーのチェックボックスを L の内容に合わせる */
+  function syncLayerBoxes() {
+    ['pos', 'vel', 'dv', 'pred', 'ray'].forEach(key => {
+      const el = $('#ly' + key.charAt(0).toUpperCase() + key.slice(1));
+      if (el) el.checked = L[key];
+    });
+  }
+
   function goto(step) {
     const from = S.step;
     S.step = step;
@@ -478,10 +493,7 @@
        にして、速度ベクトルを戻せるようにする（消しっぱなしにしない）。 */
     if (step === 5 && from === 4) {
       L.pos = false; L.vel = false; L.dv = true; L.pred = false; L.ray = false;
-      ['pos', 'vel', 'dv', 'pred', 'ray'].forEach(key => {
-        const el = $('#ly' + key.charAt(0).toUpperCase() + key.slice(1));
-        if (el) el.checked = L[key];
-      });
+      syncLayerBoxes();
     }
     if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
     HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
@@ -728,6 +740,206 @@
     })();
   }
 
+  /* ---------- 加速度探究モード ----------
+     「様々な運動の加速度ベクトルを自動描写します」。生徒に作図はさせない。
+     使う点の数を動かすたびに加速度ベクトルが即時に描き直るのが本体で、
+     運動を取り替えて何本も試すための道具である。
+
+     ★ それでも一度だけアニメーションを見せること。★
+     速度ベクトルから Δv ができて点の上に置かれるまでを省くと、加速度の
+     矢印が天から降ってくる。「自動描写」と「手順を見せる」は矛盾しない。
+     2回目以降（スライダーを動かしたとき）は即時描写にする。毎回1.5秒
+     待たされるなら、生徒はスライダーを動かすのをやめてしまう。
+
+     ★ 本筋の③④をそのまま使うこと。★ 別系統の描画を書くと、同じ運動を
+     探究モードと作図モードで見たときに矢印が食い違う。通る道は同じで、
+     駆動するのが生徒の指か setTimeout かの違いだけにしてある。
+   */
+  function isExploreMode() {
+    const p = HG.state.preset;
+    return !!(p && p.explore);
+  }
+
+  /** 探究モードの状態表示とボタンの出し入れ */
+  function exploreUI() {
+    if (!isExploreMode()) return;
+    const show = (sel, on) => { const e = $(sel); if (e) e.classList.toggle('hide', !on); };
+    const n = HG.drawing.counts().n;
+    const running = S.on && S.explore && S.step < 5;
+    const drawn = S.on && S.explore && S.step >= 5;
+
+    show('#exploreGo', !drawn && !running);
+    show('#exploreAgain', drawn);
+    show('#exploreAfter', drawn);
+    const go = $('#exploreGo'); if (go) go.disabled = (n < 3);
+
+    let msg;
+    if (n < 3) {
+      msg = '座標のあるコマが3点以上必要です。先に自動追跡（または手動打点）をしてください。';
+    } else if (running) {
+      msg = (S.step <= 2)
+        ? '速度ベクトルを描いています…'
+        : '速度ベクトルの先端どうしを結んで Δv を作り、点の上に置いています…（' +
+          (S.pair + 1) + ' / ' + (lastPair() + 1) + ' 組）';
+    } else if (drawn) {
+      /* 等速運動では Δv がゼロになる。「6本描きました」と言うと、
+         画面には点しか無いので生徒は失敗したと思う。ゼロベクトルも
+         ベクトルである、という話に振ること。 */
+      msg = (degenerate()
+        ? '<b>加速度はほぼゼロでした。</b>速度が変わっていないので Δv が点になります' +
+          '（ゼロベクトルも向きを持たないベクトルです）。'
+        : '加速度ベクトル（橙）を <b>' + HG.drawing.counts().dv + ' 本</b>描きました。') +
+        '上の「使う点の数」を動かすと、すぐに描き直します' +
+        '（ストロボ画像はスライダーから指を離したときに作り直します）。';
+    } else {
+      msg = '上の「使うコマ」で、<b>点が区間の最初から最後まで来ている</b>のを確かめてください。' +
+            'ボタンを押すと、ストロボ画像を作って加速度ベクトルを描きます。';
+    }
+    HG.dom.html('#exploreInfo', msg);
+
+    /* 解説は結果が出てから。作図モードの #revealBox と同じ扱い */
+    const p = HG.state.preset;
+    const box = $('#exploreReveal');
+    if (box) {
+      box.classList.toggle('hide', !(drawn && p && p.note));
+      if (drawn && p && p.note) {
+        HG.dom.html('#exploreReveal',
+          '<div class="reveal-title">読み取り方</div><div class="sub">' + p.note + '</div>');
+      }
+    }
+  }
+
+  /** 「次へ」。ストロボが無ければ先に作ってから描写へ進む */
+  async function exploreGo() {
+    if (HG.drawing.counts().n < 3) {
+      alert('座標のあるコマが3点以上必要です。先に自動追跡か手動打点をしてください。');
+      return;
+    }
+    const btn = $('#exploreGo');
+    if (btn) btn.disabled = true;
+    try {
+      if (!HG.strobe.cache.ready && HG.strobeControls.make) await HG.strobeControls.make();
+    } catch (e) { console.error(e); }   /* ストロボが作れなくても作図はできる */
+    if (btn) btn.disabled = false;
+    exploreBegin();
+  }
+
+  function exploreBegin() {
+    S.on = true; S.explore = true; S.auto = true; S.checked = false;
+    S.runAll = false; S.advanced = false; S.focus = -1; S.flying = -1;
+    S.collecting = false; S.holding = false; S.handle = null;
+    S.trackCrop = null; S.cropSaved = false; S.savedCrop = null;
+    document.body.classList.add('drawing');
+    HG.drawing.reset();
+    HG.pointer.setHandler(handle);
+    HG.pointer.setPreview(preview);
+    /* 誰も「軌道に合わせる」を押さないまま進むので、こちらで寄せる。
+       単振り子のように横長で浅い軌道だと、素のままでは矢印が数ピクセルになる。 */
+    if (!HG.view.crop) { try { HG.controls.fitToTrack(); } catch (e) { /* 点が少ない */ } }
+    exploreRun(S.exploreShown);
+  }
+
+  /**
+   * 探究モードの描写。
+   *   instant = true  … アニメーションなしで即時（スライダーを動かしたとき、2回目以降）
+   *   instant = false … (a) 速度ベクトルが出る →(b) 1組目を通常の速さで
+   *                     →(c) 残りを速回し →(d) 速度が消えて加速度だけが残る
+   */
+  function exploreRun(instant) {
+    const gen = ++S.exploreGen;
+    HG.state.drawing.deltaVVectors = [];
+    HG.state.drawing.velocityVectors = [];
+    S.pair = 0; S.aligned = false; S.slide = -1; S.settle = -1; S.handle = null;
+    HG.drawing.fillVelocities();
+    /* 表示範囲は入口で決めて、最後まで動かさない。③④で勝手に広がると
+       アニメーションの途中で画面が跳ねる。点の数を変えれば矢印の長さが
+       変わるので、作り直すたびに取り直す。 */
+    { const c = pairViewCrop(); if (c) HG.coords.setCrop(c); }
+    if (HG.controls.updateFitLabel) HG.controls.updateFitLabel();
+    HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
+
+    if (instant) { exploreFinish(); return; }
+
+    /* (a) まず速度ベクトルだけを軌道の上に出す。どの点の速度かを先に見せる */
+    S.step = 2; S.fade = 0;
+    exploreUI();
+    HG.stage.render();
+    setTimeout(() => {
+      if (!S.on || !S.explore || gen !== S.exploreGen) return;
+      goto(3);
+      align();                       /* (b) 1組目は通常の速さ */
+      exploreDrive(gen);
+    }, S.fastAnim ? 200 : 450);
+  }
+
+  /** ③④を最後の組まで回す。1組目だけ通常速度、2組目以降は速回し */
+  function exploreDrive(gen) {
+    let guard = 12 + 6 * HG.drawing.counts().n;
+    (function drive() {
+      if (!S.on || !S.explore || gen !== S.exploreGen) return;
+      if (S.step >= 5) { exploreFinish(); return; }
+      /* アニメーション中は待つ。空回りでは guard を減らさない
+         （減らすとアニメーションだけで回数を使い切って途中で止まる） */
+      if (S.slide >= 0 || S.settle >= 0 || S.holding) { requestAnimationFrame(drive); return; }
+      if (guard-- <= 0) { exploreFinish(); return; }
+      const fast = S.pair > 0;          /* (c) 2組目以降は速回し */
+      if (S.step === 3) align(fast);
+      else if (S.step === 4) {
+        const v = HG.drawing.autoDeltaV(S.pair);
+        if (!v) { exploreFinish(); return; }
+        HG.drawing.putDeltaV(S.pair, v);
+        settle(fast);
+      }
+      setTimeout(drive, fast ? 40 : 60);
+    })();
+  }
+
+  /** (d) 速度を消して加速度だけを残す。取りこぼした組はここで埋める */
+  function exploreFinish() {
+    for (let k = 0; k <= lastPair(); k++) {
+      if (!HG.state.drawing.deltaVVectors[k]) {
+        const v = HG.drawing.autoDeltaV(k);
+        if (v) HG.drawing.putDeltaV(k, v);
+      }
+    }
+    S.pair = lastPair(); S.aligned = true;
+    S.slide = -1; S.settle = -1; S.holding = false; S.handle = null;
+    L.pos = false; L.vel = false; L.dv = true; L.pred = false; L.ray = false;
+    syncLayerBoxes();
+    goto(5);
+    S.exploreShown = true;
+    exploreUI();
+    HG.stage.render();
+  }
+
+  /**
+   * スライダーが動いたとき。アニメーションなしで即時に描き直す。
+   * 作図モードならここで作図をやめる（点の対応が変わって矢印が無効になる）が、
+   * 探究モードではスライダーを動かすことそのものが目的なので、やめない。
+   */
+  function exploreRefresh() {
+    S.advanced = false; S.focus = -1; S.flying = -1;
+    S.collecting = false; S.holding = false;
+    if (HG.drawing.counts().n < 3) {
+      S.exploreGen++;
+      HG.drawing.reset();
+      exploreUI(); HG.stage.render();
+      return;
+    }
+    exploreRun(true);
+  }
+
+  /** 「詳しい解析へ」。探究モードを抜けて、ふつうの作図カードを出す */
+  function exploreLeave() {
+    document.body.classList.remove('mode-explore');
+    stop();
+    const dm = $('#drawMode'); if (dm) dm.value = 'hand';
+    S.auto = false;
+    updateUI();
+    const card = $('#drawCard');
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   /* ---------- 描画 ---------- */
   function paintFade(ctx) {
     if (S.fade <= 0) return;
@@ -864,6 +1076,13 @@
          そこを指で正確に押さえさせるのは思考ではないので、アプリが引き受ける。
          **もう一方の先端がどこかを見つけること**が④で観察したい思考なので、
          そこは手つかずで残す（初期の矢印は長さゼロ。向きを示唆しない）。 */
+      /* 探究モードはつまませないので輪も出さない。出すと、自動で置かれる
+         直前の一瞬だけ「つまめそうな輪」が光って見える。 */
+      if (S.explore) {
+        const z = C(tipB.x, tipB.y);
+        HG.arrows.dot(ctx, z.x, z.y, { color: COLORS.dv });
+        return;
+      }
       const h = S.handle || tipB;
       const a = C(tipB.x, tipB.y), b = C(h.x, h.y);
       if (Math.hypot(h.x - tipB.x, h.y - tipB.y) > 1) {
@@ -1394,6 +1613,8 @@
   ];
 
   function updateUI() {
+    /* 探究モードでは作図カードを出さない。ステップの札も要らない */
+    if (S.explore) { exploreUI(); return; }
     const c = HG.drawing.counts();
     HG.dom.html('#stepChips', STEPS.map(s => {
       const back = S.on && s.id < S.step;      // 戻るのは自由。⑤⑥は何度でも見返してよい
@@ -1563,7 +1784,7 @@
 
   function stop() {
     S.on = false; S.fade = 0; S.ghost = null; S.pending = null;
-    S.runAll = false;
+    S.runAll = false; S.explore = false;
     S.focus = -1; S.flying = -1;
     if (S.savedCrop) { HG.coords.setCrop(S.savedCrop); S.savedCrop = null; }
     document.body.classList.remove('drawing');
@@ -1844,9 +2065,25 @@
       if (S.step === 6) updateScaleNote();
       done();
     };
-    HG.bus.on('selection:changed', () => { if (S.on) stop(); });
+    /* ★ 探究モードではここで止めないこと。★
+       使う点の数を動かすたびに作図モードが終了すると、このモードの本体
+       （スライダーと矢印の往復）が成立しない。 */
+    HG.bus.on('selection:changed', () => {
+      if (!S.on) return;
+      if (S.explore) { exploreRefresh(); return; }
+      stop();
+    });
+
+    /* 探究モード。アニメーションは動画ごとに1回でよい */
+    if ($('#exploreGo')) $('#exploreGo').onclick = exploreGo;
+    if ($('#exploreAgain')) $('#exploreAgain').onclick = () => { exploreRun(false); };
+    if ($('#exploreDetail')) $('#exploreDetail').onclick = exploreLeave;
+    HG.bus.on('frames:scanned', () => { S.exploreShown = false; });
+    HG.bus.on('points:changed', exploreUI);
+    exploreUI();
     updateUI();
   }
 
-  HG.draw = { attach, paint, paintFade, isHodo, active, state: S, start, stop };
+  HG.draw = { attach, paint, paintFade, isHodo, active, state: S, start, stop,
+              exploreGo, exploreRun, exploreRefresh, isExploreMode };
 })(window.HG = window.HG || {});

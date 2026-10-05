@@ -13,7 +13,11 @@
 
   const $ = HG.$;
 
-  function all() { return HG.presets.list.concat([HG.presets.strobeOnly]); }
+  /* 運動のタイル → 道具のタイル（加速度探究・ストロボ）の順。
+     道具のほうは「どの運動でも使える」ので、運動の列から外して後ろに置く。 */
+  function all() {
+    return HG.presets.list.concat([HG.presets.explore, HG.presets.strobeOnly]);
+  }
 
   function render() {
     HG.dom.html('#tiles', all().map(p =>
@@ -41,6 +45,11 @@
 
     document.body.classList.toggle('mode-strobe', !!preset.strobeOnly);
     document.body.classList.toggle('mode-free', preset.id === 'free');
+    /* 加速度探究モードは自動描写しかしない。作図モードの選択は出さないので、
+       裏側の select は自動に寄せておく（「詳しい解析へ」で手書きに戻す）。 */
+    document.body.classList.toggle('mode-explore', !!preset.explore);
+    const dm = $('#drawMode');
+    if (dm) dm.value = preset.explore ? 'auto' : 'hand';
   }
 
   /**
@@ -79,7 +88,9 @@
   }
 
   function choose(id) {
-    const preset = (id === 'strobe') ? HG.presets.strobeOnly : HG.presets.byId(id);
+    const preset = (id === 'strobe') ? HG.presets.strobeOnly
+                 : (id === 'explore') ? HG.presets.explore
+                 : HG.presets.byId(id);
     if (!preset) return;
     apply(preset);
     showNote(preset);

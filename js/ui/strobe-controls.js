@@ -182,5 +182,7 @@
     }, 'image/png');
   }
 
-  HG.strobeControls = { attach, recompose, rebuild };
+  /* make を公開する理由：加速度探究モードの「次へ」は、ストロボが無ければ
+     自分で作ってから描写へ進む（生徒に2回ボタンを押させない）。 */
+  HG.strobeControls = { attach, recompose, rebuild, make };
 })(window.HG = window.HG || {});
