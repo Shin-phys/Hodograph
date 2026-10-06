@@ -314,19 +314,23 @@
       setCount(sel().count);
       apply();
     }
+    /* ★ 平常時は何も出さない。★ 以前は「いまの7点：±2°／荒れるコマで ±9°」を
+       常時出していたが、読み方の説明が要る数字を生徒の導線に置いても使われない。
+       **矢印が逆を向く素材だけ**を止めたいので、荒れるコマで ±45°を超えたときと、
+       素材そのものが苦しいときだけに絞る。平常時の数字は診断カードにある。 */
     const cur = current();
-    HG.dom.html('#selSuggest',
-      'いまの ' + sel().count + ' 点（' + sel().interval + ' コマおき）：<b>Δv の向きの不確かさ ±' +
-      cur.angle.toFixed(0) + '°／荒れるコマで ±' + cur.angleWorst.toFixed(0) + '°</b>' +
-      (cur.angleWorst > 45
-        ? '<br><span class="warn">荒れるコマでのばらつきが大きすぎます。このままだと、' +
-          'ブレたコマの矢印が逆を向くことがあります。点の数を減らしてください。</span>'
-        : cur.angle > 15
-          ? '<br><span class="warn">⑥の判定は ±15° です。この点数では自動算出側の' +
-            'ばらつきが判定幅を超えます。点の数を減らすか、スローで撮り直してください。</span>'
-          : '') +
-      (g.accWeak ? '<br>この素材では、どの間隔でも Δv がジッタと同じくらいの大きさにとどまります。' +
-                   '間隔を変えても改善しない場合は、素材の側の性質です。' : ''));
+    let warn = '';
+    if (cur.angleWorst > 45) {
+      warn += '<span class="warn">荒れるコマでのばらつきが ±' + cur.angleWorst.toFixed(0) +
+              '° あります。このままだと、ブレたコマの矢印が逆を向くことがあります。' +
+              '<b>点の数を減らしてください。</b></span>';
+    }
+    if (g.accWeak) {
+      warn += (warn ? '<br>' : '') +
+              '<span class="warn">この素材では、どの間隔でも Δv がジッタと同じくらいの' +
+              '大きさにとどまります。間隔を変えても改善しない場合は、素材の側の性質です。</span>';
+    }
+    HG.dom.html('#selSuggest', warn);
     HG.bus.emit('quality:changed');
   }
 

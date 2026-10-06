@@ -302,14 +302,31 @@
     HG.bus.emit('points:changed');
   }
 
-  /** 画面上のシールをタップして「この色を追う」を指定する */
-  function pickColorAt(ox, oy) {
+  /** 色を拾う円の半径（元解像度ピクセル）。1画素ではなくこの円の色相平均を使う */
+  function sampleRadius() {
     const o = HG.frames.offscreen;
-    const r = Math.max(4, Math.round(o.width * 0.012));
+    return Math.max(4, Math.round((o ? o.width : HG.state.video.width) * 0.012));
+  }
+
+  /**
+   * その位置の色を読むだけ（state は変えない）。
+   * 色選択を「タップ → ずらして微調整 → 決定」の2段階にしたので、
+   * 確定前に何度も読み直す必要がある。
+   */
+  function sampleColorAt(ox, oy) {
+    const o = HG.frames.offscreen;
+    if (!o || !o.width) return null;
+    const r = sampleRadius();
     const x0 = Math.max(0, Math.round(ox - r)), y0 = Math.max(0, Math.round(oy - r));
     const w = Math.min(o.width - x0, r * 2 + 1), h = Math.min(o.height - y0, r * 2 + 1);
+    if (w <= 0 || h <= 0) return null;
     const img = o.getContext('2d').getImageData(x0, y0, w, h);
-    const c = HG.color.sampleAround(img, ox - x0, oy - y0, r);
+    return HG.color.sampleAround(img, ox - x0, oy - y0, r);
+  }
+
+  /** 画面上のシールをタップして「この色を追う」を確定する */
+  function pickColorAt(ox, oy) {
+    const c = sampleColorAt(ox, oy);
     if (c) {
       HG.state.tracking.target = c;
       // タップした位置＝そのとき運動体があった場所。追跡の出発点として覚えておく
@@ -318,5 +335,5 @@
     return c;
   }
 
-  HG.tracker = { trackAll, clearAuto, pickColorAt, prepare };
+  HG.tracker = { trackAll, clearAuto, pickColorAt, sampleColorAt, sampleRadius, prepare };
 })(window.HG = window.HG || {});

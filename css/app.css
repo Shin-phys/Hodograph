@@ -51,6 +51,35 @@ ul.guide{margin:6px 0 0 -8px; padding-left:20px;}
 ul.ideas{margin:6px 0 10px -8px; padding-left:20px; columns:2; font-size:13px; color:var(--sub);}
 ul.ideas li{margin:2px 0; break-inside:avoid;}
 
+/* ===== ステップの帯（1〜6） ===== */
+#stepNavCard{padding:8px 10px;}
+.stepnav{display:flex; gap:4px; flex-wrap:wrap;}
+.stepnav .step{display:flex; align-items:center; gap:4px; min-height:34px; padding:0 9px;
+               font-size:12px; border-radius:999px; background:#eef1f5; color:var(--sub);
+               border:1px solid transparent; white-space:nowrap;}
+.stepnav .step b{font-size:13px;}
+.stepnav .step.now{background:var(--accent); color:#fff; font-weight:700;}
+.stepnav .step.ok{background:#e6f4ec; color:var(--ok); border-color:#bde0cd;}
+.stepnav .step.ok b::after{content:'✓'; margin-left:2px;}
+
+/* 畳めるカード（手で打つ／教師用のモード） */
+details.card > summary{font-size:14px; font-weight:700; cursor:pointer; list-style:none;}
+details.card > summary::-webkit-details-marker{display:none;}
+details.card > summary::before{content:'▸ '; color:var(--sub); font-weight:400;}
+details.card[open] > summary::before{content:'▾ ';}
+details.card > summary + *{margin-top:10px;}
+
+/* ルーペの逃げ場。**キャンバスの中に指と重ならない場所が取れないことがある。**
+   スマホではキャンバスの高さを画面の 42% に抑えているので、130px のルーペを
+   置ける隙間が無い（下半分を触ると位置の丸め込みでルーペが指まで降りてくる）。
+   そのときはここへ逃がす。色選択では常にここを使う。 */
+#loupeBand{align-items:center; min-height:70px;}
+#loupe.docked{position:static; display:block; flex:0 0 auto;}
+#loupeInfo{line-height:1.5;}
+.note-mark{color:var(--accent); font-weight:700; margin-left:2px;}
+/* ※の説明は狭い画面だけ。PC はボタンのマウスオン（title）で足りる */
+@media (min-width:900px){ #markerHelp{display:none;} }
+
 /* ===== 加速度探究モード =====
    作図はさせないので作図カードは出さない。代わりに専用カードを出す。
    **body.drawing でも「使うコマ」とストロボのカードは畳まないこと。**

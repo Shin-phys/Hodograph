@@ -499,6 +499,7 @@
     HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
     updateUI();
     updateReveal();
+    if (HG.steps) HG.steps.render();
     HG.stage.render();
   }
 
@@ -1793,6 +1794,7 @@
     HG.pointer.setPreview(null);
     HG.stage.setSource(HG.strobe.cache.ready ? HG.strobe.canvas() : null, HG.strobe.cache.scale);
     updateUI();
+    if (HG.steps) HG.steps.render();
     HG.stage.render();
   }
 

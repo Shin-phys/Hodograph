@@ -24,6 +24,9 @@
     $('#setOut').onclick = () => {
       HG.state.trim.outIndex = Math.max(HG.ui.current, HG.state.trim.inIndex);
       HG.bus.emit('trim:changed');
+      /* 区間が決まったら t=0 へ戻す。次は「追う色を指定」で、そのとき見たい
+         コマは終点ではなく t=0（物体が写り始めるコマ）だから。 */
+      HG.frames.showFrame(HG.state.trim.inIndex);
     };
     $('#resetTrim').onclick = () => {
       HG.state.trim.inIndex = 0;
@@ -195,7 +198,7 @@
     HG.dom.text('#frameLabel', 'コマ ' + HG.ui.current + ' / ' + (fr.length - 1));
     HG.dom.text('#timeLabel', 't = ' + (f ? f.t.toFixed(3) : '0.000') + ' s');
     HG.dom.text('#trimLabel',
-      'イン ' + inI + '（' + fr[inI].t.toFixed(3) + ' s） 〜 アウト ' + outI +
+      't=0 はコマ ' + inI + '（' + fr[inI].t.toFixed(3) + ' s） 〜 終点はコマ ' + outI +
       '（' + fr[outI].t.toFixed(3) + ' s）／' + (outI - inI + 1) + ' コマ' +
       (HG.ui.limitToTrim ? '（この区間だけを表示中）' : ''));
 

@@ -107,6 +107,12 @@
       <canvas id="loupe" width="260" height="260"></canvas>
       <div id="hint">画面をタップで打点／長押しでルーペ</div>
     </div>
+    <!-- ルーペの逃げ場。キャンバスの中に指と重ならない場所が取れないときは
+         こちらに出す。色選択では常にここを使い、拾っている色も並べて見せる。 -->
+    <div class="row tight spaced-sm hide" id="loupeBand">
+      <div id="loupeSlot"></div>
+      <div class="grow sub" id="loupeInfo"></div>
+    </div>
     <canvas id="tl"></canvas>
     <div class="row between labels">
       <span class="mono" id="frameLabel">コマ 0 / 0</span>
@@ -122,8 +128,13 @@
   </div><!-- /col-main -->
 
   <div class="col-side">
+  <div class="card" id="stepNavCard">
+    <div class="stepnav" id="stepNav"></div>
+  </div>
+
   <div class="card card-tool">
-    <h2>コマ送り</h2>
+    <h2>コマを送る</h2>
+    <div class="sub spaced-sm">どのステップでもいつでも使えます。</div>
     <div class="row tight">
       <button id="prev10">≪ −10</button>
       <button id="prev" class="grow">◀ 前</button>
@@ -132,36 +143,67 @@
     </div>
   </div>
 
-  <div class="card card-tool">
-    <h2>トリム（解析に使う区間）</h2>
+  <div class="card card-tool" id="trimCard">
+    <h2>1. 解析に使う区間を決める</h2>
+    <div class="sub spaced-sm">1-1 運動が始まるコマへ送って「ここを t=0 に」。
+      1-2 終わるコマへ送って「ここを終点に」。</div>
     <div class="row tight">
-      <button id="setIn" class="grow">ここをイン点に</button>
-      <button id="setOut" class="grow">ここをアウト点に</button>
+      <button id="setIn" class="grow">ここを t=0 に</button>
+      <button id="setOut" class="grow">ここを終点に</button>
       <button id="resetTrim" class="ghost">全体</button>
     </div>
     <div class="row tight spaced-sm">
-      <button id="gotoIn" class="grow">⇤ イン点へ</button>
-      <button id="gotoOut" class="grow">アウト点へ ⇥</button>
+      <button id="gotoIn" class="grow">⇤ t=0 へ</button>
+      <button id="gotoOut" class="grow">終点へ ⇥</button>
     </div>
     <div class="row spaced-sm">
-      <label class="chk"><input type="checkbox" id="limitTrim"> イン〜アウトだけを表示する</label>
+      <label class="chk"><input type="checkbox" id="limitTrim"> この区間だけを表示する</label>
     </div>
     <div class="sub mono spaced" id="trimLabel"></div>
     <div class="sub">余計な前後（手で押している区間、バウンド後など）を先に切り落とします。追跡・背景推定より前に確定させる設計です。</div>
   </div>
 
-  <div class="card card-tool" id="trackCard">
-    <h2>自動追跡</h2>
+  <div class="card card-tool" id="markCard">
+    <h2>2. 追う色を決める</h2>
+    <div class="sub spaced-sm">2-1 追いたいシールをタップしてください。タップしたあと指でずらして微調整できます。</div>
     <div class="row tight">
-      <button id="pickColor" class="grow">追う色を指定</button>
-      <button id="pickMarker" class="grow">固定マーカーを指定</button>
+      <button id="pickColor" class="primary grow">追う色を指定</button>
+      <button id="pickMarker" class="grow" title="カメラが動いてしまったときの補正用です。動かない場所（机や壁）に貼ったシールを指定すると、そのシールが動いたぶんを全部の点から差し引きます。三脚で固定できていれば使わなくて構いません。">固定マーカーを指定<span class="note-mark">※</span></button>
+    </div>
+    <div class="row tight spaced hide" id="pickRow">
+      <button id="pickDecide" class="primary grow">この色で決定</button>
+      <button id="pickCancel" class="ghost">やめる</button>
     </div>
     <div class="row spaced">
       <span class="sub">追う色</span>
       <span id="colorChip" class="chip"></span>
       <span class="sub mono" id="colorLabel"></span>
     </div>
+    <!-- 「固定マーカー」が何なのか分からないという指摘。PC はボタンのマウスオン、
+         スマホはこの※の行で説明する（狭い画面でだけ出す） -->
+    <div class="sub spaced" id="markerHelp">※ <b>固定マーカー</b>は、カメラが動いてしまったときの補正用です。
+      動かない場所（机や壁）に貼ったシールを指定すると、そのシールが動いたぶんを全部の点から差し引きます。
+      <b>三脚で固定できていれば使わなくて構いません。</b></div>
+    <div class="row spaced">
+      <label class="chk"><input type="checkbox" id="useMarker" checked> カメラぶれ補正を使う（固定マーカーの変位を差し引く）</label>
+    </div>
+  </div>
 
+  <div class="card card-tool" id="trackCard">
+    <h2>3. 自動で追跡する</h2>
+    <div class="row tight">
+      <button id="runTrack" class="primary grow">自動追跡を実行</button>
+      <button id="clearTrack" class="ghost">結果を消す</button>
+    </div>
+    <div class="bar hide spaced-sm" id="trackBar"><i></i></div>
+    <div class="sub spaced" id="trackResult">先に「追う色を指定」をしてから実行してください。追跡できなかったコマは手動で打てます。</div>
+    <div class="row tight spaced hide" id="trackAskRow">
+      <span class="sub grow">うまくいきましたか？</span>
+      <button id="trackOk" class="primary">はい</button>
+      <button id="trackNg" class="ghost">いいえ</button>
+    </div>
+    <div class="sub spaced hide" id="trackAdvice"></div>
+    <button id="gotoLost" class="ghost hide spaced">見失ったコマへ</button>
     <div class="slider spaced">
       <label>色相の幅 <span class="mono" id="hueTolVal">25°</span></label>
       <input type="range" id="hueTol" min="5" max="60" value="25">
@@ -170,22 +212,11 @@
       <label>彩度の下限 <span class="mono" id="satMinVal">0.35</span></label>
       <input type="range" id="satMin" min="5" max="90" value="35">
     </div>
-
-    <div class="row tight spaced">
-      <button id="runTrack" class="primary grow">自動追跡を実行</button>
-      <button id="clearTrack" class="ghost">結果を消す</button>
-    </div>
-    <div class="bar hide spaced-sm" id="trackBar"><i></i></div>
-
-    <div class="row spaced">
-      <label class="chk"><input type="checkbox" id="useMarker" checked> カメラぶれ補正を使う（固定マーカーの変位を差し引く）</label>
-    </div>
-    <div class="sub spaced" id="trackResult">シールをタップして色を指定してから実行してください。追跡できなかったコマは手動で打てます。</div>
-    <button id="gotoLost" class="ghost hide spaced">見失ったコマへ</button>
+    <div class="sub">見つけられないときは<b>彩度の下限を下げる</b>、背景まで拾ってしまうときは<b>色相の幅を狭める</b>。</div>
   </div>
 
-  <div class="card card-tool" id="pointCard">
-    <h2>打点</h2>
+  <details class="card card-tool" id="pointCard">
+    <summary>手で打つ（自動追跡がうまくいかないとき）</summary>
     <div class="row tight">
       <button id="delCur" class="grow">このコマの点を消す</button>
       <button id="undo" class="grow">直前を取り消す</button>
@@ -206,15 +237,15 @@
       <label class="chk"><input type="checkbox" id="showNum" checked> 番号を表示</label>
     </div>
     <div class="sub mono spaced" id="ptLabel"></div>
-  </div>
+  </details>
 
   <div class="card card-tool" id="selectCard">
-    <h2>使うコマ（等間隔）</h2>
+    <h2>4. 使うコマを決める（等間隔）</h2>
     <div class="slider">
       <label>使う点の数 <span class="mono" id="selCountVal">7 点</span></label>
       <input type="range" id="selCount" min="3" max="20" value="7">
     </div>
-    <div class="sub spaced-sm"><b>点を減らすと、1本あたりの矢印が長くなって作図しやすくなります。</b>
+    <div class="sub spaced-sm"><b>点を減らすと矢印が長くなって作図しやすくなります。矢印がズレる場合は点を減らしてみてください。</b>
       間隔はトリムした区間に行き渡るよう自動で決まります。</div>
     <div class="sub mono spaced" id="selInfo"></div>
     <div class="sub spaced" id="selSuggest"></div>
@@ -237,7 +268,7 @@
   </div>
 
   <div class="card card-tool" id="strobeCard">
-    <h2>ストロボ画像</h2>
+    <h2>5. ストロボ画像をつくる</h2>
     <div class="row tight">
       <select id="strobeMethod" class="grow">
         <option value="diff">中央値背景＋全画面差分（既定）</option>
@@ -287,15 +318,18 @@
   </div>
 
   <div class="card" id="drawCard">
-    <h2>作図</h2>
+    <h2>6. 作図</h2>
     <div class="chips" id="stepChips"></div>
     <div class="sub spaced" id="drawHint">ストロボ画像を作ってから「作図をはじめる」を押してください。</div>
-    <div class="row tight spaced" id="drawModeRow">
-      <select id="drawMode" class="grow">
+    <!-- 自動モードは加速度探究モードのタイルと役割が重なった。生徒が
+         「作図をはじめる」の隣でこれを見つけると答えが出てしまうので畳む。 -->
+    <details class="spaced" id="drawModeRow">
+      <summary class="sub">教師用：提示・下見のモード</summary>
+      <select id="drawMode" class="grow spaced-sm">
         <option value="hand">手書きモード（生徒が描く）</option>
         <option value="auto">自動モード（提示・下見用）</option>
       </select>
-    </div>
+    </details>
     <div id="autoSetupRow" class="hide spaced">
       <label class="chk"><input type="checkbox" id="autoRunAll" checked>
         結果（軌道の上の矢印）まで一気に進む</label>
@@ -420,6 +454,7 @@
 <script src="js/ui/controls.js"></script>
 <script src="js/ui/track-controls.js"></script>
 <script src="js/ui/selection.js"></script>
+<script src="js/ui/steps.js"></script>
 <script src="js/ui/hodograph.js"></script>
 <script src="js/ui/draw-steps.js"></script>
 <script src="js/ui/prediction.js"></script>

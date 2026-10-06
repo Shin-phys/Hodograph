@@ -22,8 +22,15 @@
   /* 短い調整を繰り返すステップ（④の Δv）では、長押しを待たずに拡大鏡を出す。
      長押しが要ると、数ピクセルの追い込みには使えない。 */
   let eagerLoupe = false;
+  /* 色選択の最中は、指を離してもルーペの帯を閉じない（確定前に見比べる） */
+  let keepBand = false;
   let handler = null;         // ({ox, oy, cx, cy, dragged}) => void
   let preview = null;         // ドラッグ中の描き先（フェーズ4で使う）
+  /* 触れた瞬間に呼ぶ。色選択では、指を置いた時点で拡大像と色を出したい
+     （離すまで何も出ないと、結局「見ないままタップ」に戻ってしまう）。
+     ④の Δv で preview を流用しないこと：触れただけでハンドルが動いてしまい、
+     「初期の Δv は長さゼロ（向きを示唆しない）」という設計が崩れる。 */
+  let downHandler = null;
 
   function toPoint(ev) {
     const r = cv.getBoundingClientRect();
@@ -42,6 +49,7 @@
       cv.setPointerCapture(e.pointerId);
       const p = toPoint(e);
       press = { start: p, p: p, moved: 0, loupe: false, t0: performance.now() };
+      if (downHandler) { downHandler(p); return; }
       if (eagerLoupe) { press.loupe = true; HG.loupe.show(p); }
       else press.timer = setTimeout(() => { press.loupe = true; HG.loupe.show(press.p); }, LONG_PRESS_MS);
     });
@@ -56,14 +64,14 @@
         press.loupe = true;
         clearTimeout(press.timer);
       }
-      if (press.loupe) HG.loupe.show(p);
+      if (press.loupe && !downHandler) HG.loupe.show(p);
       if (preview) preview(press.start, p);
     });
 
     const end = () => {
       if (!press) return;
       clearTimeout(press.timer);
-      HG.loupe.hide();
+      if (!downHandler) HG.loupe.hide(keepBand);
       const cur = press;
       press = null;
       if (handler) {
@@ -87,6 +95,8 @@
     attach,
     setHandler(fn) { handler = fn; },
     setPreview(fn) { preview = fn; },
-    setEagerLoupe(on) { eagerLoupe = !!on; }
+    setEagerLoupe(on) { eagerLoupe = !!on; },
+    setKeepBand(on) { keepBand = !!on; },
+    setDownHandler(fn) { downHandler = fn || null; }
   };
 })(window.HG = window.HG || {});

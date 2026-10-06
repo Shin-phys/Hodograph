@@ -61,8 +61,9 @@
     $('#goVectors').onclick = () => {
       document.body.classList.remove('mode-strobe');
       HG.dom.hide('#toVectors');
-      HG.dom.text('#trackResult', 'シールをタップして色を指定し、「自動追跡を実行」を押すと座標が取れます。');
-      $('#trackCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      HG.dom.text('#trackResult', '「追う色を指定」でシールを選び、「自動追跡を実行」を押すと座標が取れます。');
+      if (HG.steps) HG.steps.render();
+      $('#markCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
   }
 
@@ -147,6 +148,7 @@
     HG.stage.register(HG.overlay.drawPoints);
     HG.stage.register(HG.overlay.drawMarker);
     HG.stage.register(HG.draw.paint);              // 作図の矢印
+    HG.stage.register(HG.trackControls.paintAim);   // 色・マーカーを選ぶときの照準（最前面）
     HG.controls.attach();
     HG.trackControls.attach();
     HG.selection.attach();
@@ -154,6 +156,7 @@
     HG.draw.attach();
     HG.prediction.attach();
     HG.tiles.attach();
+    HG.steps.attach();
     wireUpload();
 
     HG.bus.on('frame:changed', refresh);
