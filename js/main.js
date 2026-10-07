@@ -62,8 +62,7 @@
       document.body.classList.remove('mode-strobe');
       HG.dom.hide('#toVectors');
       HG.dom.text('#trackResult', '「追う色を指定」でシールを選び、「自動追跡を実行」を押すと座標が取れます。');
-      if (HG.steps) HG.steps.render();
-      $('#markCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (HG.steps) { HG.steps.render(); HG.steps.goTo('#markCard'); }
     };
   }
 

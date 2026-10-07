@@ -80,6 +80,10 @@
     HG.state.frames = frames;
     HG.state.trim.inIndex = 0;
     HG.state.trim.outIndex = frames.length - 1;
+    /* ここで入れる outIndex は「まだ決めていない」の初期値。
+       生徒が決めたという記録は消す（ステップ1の ✓ が先に付かないように） */
+    HG.state.trim.userSet = false;
+    HG.state.tracking.verified = false;
     HG.ui.scanning = false;
     HG.bus.emit('frames:scanned', frames.length);
     return frames.length;

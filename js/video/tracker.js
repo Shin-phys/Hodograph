@@ -81,19 +81,148 @@
     return s ? { x: s.x, y: s.y } : null;
   }
 
-  /** 前のコマの座標に最も近いブロブを選ぶ（複数見つかったとき） */
-  function nearest(blobs, prev) {
-    if (!prev) return blobs[0];                      // 最初は最大のブロブ
-    let best = null, bd = Infinity;
+  /**
+   * 候補のブロブから1つ選ぶ。
+   *
+   * @param aim  狙う位置（元解像度）。2コマ指定があれば「予測した次の位置」、
+   *             無ければ従来どおり「前のコマの位置」
+   * @param win  探索窓の半径（元解像度）。null なら窓なし（従来の挙動）
+   * @param hint ブロブの面積の見当（元解像度 px²）。null なら使わない
+   *
+   * ★ 窓の中に何も無ければ null を返すこと（見失い扱い）。★
+   * 窓を無視して遠くの最寄りを拾うと、2コマ指定の目的（同じ色の別の物体や
+   * 背景を拾わない）がそのまま消える。見失ったコマは手で打てる。
+   */
+  function nearest(blobs, aim, win, hint) {
+    if (!aim) return blobs[0];                       // 最初は最大のブロブ
+    let best = null, bs = Infinity;
     for (const b of blobs) {
-      const d = Math.hypot(b.cx / scale - prev.x, b.cy / scale - prev.y);
-      if (d < bd) { bd = d; best = b; }
+      const d = Math.hypot(b.cx / scale - aim.x, b.cy / scale - aim.y);
+      if (win && d > win) continue;
+      /* 大きさが見当から桁違いのブロブは後回しにする。窓の中に複数あるときの
+         決め手にするだけで、他に無ければ結局これを採る（罰則を足すだけ）。 */
+      let pen = 0;
+      if (hint && b.area) {
+        const a = b.area / (scale * scale);
+        const rel = a > hint ? a / hint : hint / a;
+        if (rel > 4) pen = (win || 0) * 0.5 + 1;
+      }
+      if (d + pen < bs) { bs = d + pen; best = b; }
     }
     return best;
   }
 
+  /* ---------- 2コマ指定（ステップ3の「いいえ」から） ----------
+     1コマ目と2コマ目で物体を指定してもらうと、3つが決まる。
+
+       ・初速 → 次のコマの位置を予測できる。**これが本体。**
+         画面全体から色の合うブロブを探すのをやめ、予測の周りだけを見る。
+         同じ色の別の物体や背景を拾う事故がほぼ消える。
+       ・色のサンプルが2つ → 両方を含む色相の幅・彩度の下限を自動で決める。
+         スライダーを手で合わせる場面が減る。
+       ・大きさの見当 → 窓の中に複数あるときの決め手。
+
+     窓は前の変位の3倍に取る。**2倍では足りない。** 減速や折り返しでは
+     変位が縮むのではなく、次の変位が前より大きくなる向きに転じることが
+     あるため（振り子の端を通り過ぎた直後など）。
+     見失ったコマが続くときは、その数だけ窓を広げて取り戻す。
+
+     入口をここ（「いいえ」のあと）に置いたのは、うまくいく素材では手順を
+     増やさないため。全員に2コマ指定させると、事故が減るぶん「いいえ」自体は
+     減るが、**全員が1手多く払う**ことになる。 */
+
+  /** 2つの色サンプルから、両方を含む色の範囲を決める */
+  function fitColor(c1, c2) {
+    if (!c1 && !c2) return null;
+    if (!c1 || !c2) return { target: c1 || c2, hueTol: null, satMin: null };
+    let diff = c2.h - c1.h;                          // 色相は円環なので符号付きで取る
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    let h = c1.h + diff / 2;
+    if (h < 0) h += 360;
+    if (h >= 360) h -= 360;
+    return {
+      target: { h: h, s: (c1.s + c2.s) / 2, v: (c1.v + c2.v) / 2 },
+      /* 2点がほぼ同色なら狭く（12°程度）、開いていればその分広げる */
+      hueTol: Math.max(10, Math.min(60, Math.round(Math.abs(diff) * 1.6 + 10))),
+      satMin: Math.max(0.05, Math.min(0.9, Math.min(c1.s, c2.s) * 0.7))
+    };
+  }
+
+  /**
+   * その点にあるブロブの面積（元解像度 px²）。大きさの見当に使うだけなので、
+   * いまの色設定のまま、点の周りの狭い範囲だけを見る。
+   */
+  function measureAreaAt(ox, oy) {
+    const o = HG.frames.offscreen;
+    if (!o || !o.width) return null;
+    const r = Math.max(10, sampleRadius() * 3);
+    const x0 = Math.max(0, Math.round(ox - r)), y0 = Math.max(0, Math.round(oy - r));
+    const w = Math.min(o.width - x0, r * 2 + 1), h = Math.min(o.height - y0, r * 2 + 1);
+    if (w < 3 || h < 3) return null;
+    const img = o.getContext('2d').getImageData(x0, y0, w, h);
+    const m = HG.blob.buildMask(img, conf().target, tol());
+    const found = HG.blob.findBlobs(m, 3);
+    return found.length ? found[0].area : null;
+  }
+
+  /**
+   * 2コマ指定を確定する。
+   * @param p1 {x, y, index, color, area} 1コマ目
+   * @param p2 {x, y, index, color, area} 2コマ目
+   * @returns 決まった内容（UI がそのまま表示する）／組めなければ null
+   */
+  function setTwoFrames(p1, p2) {
+    const fr = HG.state.frames, c = conf();
+    if (!p1 || !p2 || p1.index === p2.index) return null;
+    const dt = fr[p2.index].t - fr[p1.index].t;
+    if (!(dt > 0)) return null;
+    const fit = fitColor(p1.color, p2.color);
+    if (fit) {
+      c.target = fit.target;
+      if (fit.hueTol !== null) c.hueTol = fit.hueTol;
+      if (fit.satMin !== null) c.satMin = fit.satMin;
+    }
+    const step = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const areas = [p1.area, p2.area].filter(a => a > 0);
+    c.seed = { x: p1.x, y: p1.y };
+    c.twoFrame = {
+      at: { x: p1.x, y: p1.y }, index: p1.index,
+      /* 秒あたりで持つ。コマあたりにすると VFR の動画で予測がずれる */
+      vel: { x: (p2.x - p1.x) / dt, y: (p2.y - p1.y) / dt },
+      step: step, frames: p2.index - p1.index, dt: dt,
+      sizeHint: areas.length ? Math.min.apply(null, areas) / (scale * scale || 1) : null
+    };
+    return c.twoFrame;
+  }
+
+  function clearTwoFrames() { conf().twoFrame = null; }
+
+  /** 次のコマで物体が居るはずの位置 */
+  function predict(ctxState, index) {
+    if (!ctxState.prev) return null;
+    if (!ctxState.vel || ctxState.prevIndex === null || ctxState.prevIndex === undefined) {
+      return ctxState.prev;
+    }
+    const fr = HG.state.frames;
+    const dt = fr[index].t - fr[ctxState.prevIndex].t;
+    /* 逆行や飛びすぎでは予測しない（パスBはコマ順に走らないことがある） */
+    if (!(dt > 0) || dt > 0.5) return ctxState.prev;
+    return { x: ctxState.prev.x + ctxState.vel.x * dt,
+             y: ctxState.prev.y + ctxState.vel.y * dt };
+  }
+
+  /** 探索窓の半径。見失いが続いたらその数だけ広げて取り戻す */
+  function searchWindow(ctxState) {
+    if (!ctxState.vel) return null;                  // 2コマ指定が無ければ窓なし
+    const W = HG.state.video.width;
+    const base = (ctxState.step || 0) * 3 + sampleRadius() * 2;
+    const win = Math.max(W * 0.04, Math.min(W * 0.45, base));
+    return win * (1 + Math.min(4, ctxState.miss || 0));
+  }
+
   /* --- 1コマぶんの解析。offscreen に描かれている前提 --- */
-  function analyseFrame(ctxState) {
+  function analyseFrame(ctxState, index) {
     const img = analysisImage();
     const m = HG.blob.buildMask(img, conf().target, tol());
     const blobs = HG.blob.findBlobs(m, conf().minArea);
@@ -116,7 +245,10 @@
       return Math.hypot(b.cx / scale - mk.x, b.cy / scale - mk.y) >= conf().markerWindow;
     });
     if (others.length) {
-      const pick = nearest(others, ctxState.prev);
+      /* 2コマ指定があれば「予測した位置の周りだけ」、無ければ従来どおり
+         「前のコマの位置に最も近いもの」 */
+      const aim = predict(ctxState, index);
+      const pick = nearest(others, aim, searchWindow(ctxState), ctxState.sizeHint);
       if (pick) moving = refine(pick);
     }
 
@@ -134,12 +266,32 @@
       f.rawY = Math.round(res.moving.y * 10) / 10;
       f.found = true;
       f.manual = false;
+      /* 速度を取り直して次の予測に使う。**生の差分で置き換えないこと。**
+         1コマぶんのブレがそのまま次の予測を飛ばすので、少し前の値を混ぜる。
+         混ぜすぎると等加速度運動で予測が遅れるため 0.35 にとどめている。 */
+      if (ctxState.vel && ctxState.prev && ctxState.prevIndex !== null &&
+          ctxState.prevIndex !== undefined) {
+        const dt = f.t - HG.state.frames[ctxState.prevIndex].t;
+        if (dt > 0 && dt < 0.5) {
+          const vx = (res.moving.x - ctxState.prev.x) / dt;
+          const vy = (res.moving.y - ctxState.prev.y) / dt;
+          ctxState.vel = { x: ctxState.vel.x * 0.35 + vx * 0.65,
+                           y: ctxState.vel.y * 0.35 + vy * 0.65 };
+          ctxState.step = Math.hypot(res.moving.x - ctxState.prev.x,
+                                     res.moving.y - ctxState.prev.y);
+        }
+      }
       ctxState.prev = { x: res.moving.x, y: res.moving.y };
+      ctxState.prevIndex = index;
+      ctxState.miss = 0;
       report.tracked++;
       if (res.moving.elongation > report.maxElongation) report.maxElongation = res.moving.elongation;
       if (res.moving.elongation > 2.2) report.elongated++;
     } else {
       f.rawX = null; f.rawY = null; f.found = false;
+      /* 見失ったコマでは prev を動かさない（予測の足場を失わないため）。
+         代わりに回数を数え、次のコマで窓を広げて取り戻す。 */
+      ctxState.miss = (ctxState.miss || 0) + 1;
       report.lost.push(index);
       if (!res.blobCount) report.noBlob++;
     }
@@ -187,7 +339,7 @@
         const i = nearestIndex(t);
         if (todo.has(i)) {
           HG.frames.drawToOffscreen();
-          store(i, analyseFrame(ctxState), ctxState, report);
+          store(i, analyseFrame(ctxState, i), ctxState, report);
           todo.delete(i);
           onProgress((indices.length - todo.size) / indices.length * 0.9);
         }
@@ -219,6 +371,15 @@
     }
     return seed(HG.state.trim.inIndex);
   }
+  /** neighbourSeed() が返した位置のコマ番号。予測の Δt に使う */
+  function neighbourIndex(i) {
+    const fr = HG.state.frames;
+    for (let d = 1; d <= 8; d++) {
+      if (fr[i - d] && fr[i - d].found && fr[i - d].rawX !== null) return i - d;
+      if (fr[i + d] && fr[i + d].found && fr[i + d].rawX !== null) return i + d;
+    }
+    return null;
+  }
   function neighbourMarker(i) {
     const m = HG.state.refMarker || [];
     for (let d = 1; d <= 8; d++) {
@@ -239,8 +400,9 @@
       await HG.frames.seekTo(fr[i].t + eps);
       HG.frames.drawToOffscreen();
       ctxState.prev = neighbourSeed(i);
+      ctxState.prevIndex = neighbourIndex(i);
       ctxState.markerPrev = neighbourMarker(i);
-      store(i, analyseFrame(ctxState), ctxState, report);
+      store(i, analyseFrame(ctxState, i), ctxState, report);
       onProgress(0.9 + (++n / rest.length) * 0.1);
     }
   }
@@ -262,14 +424,27 @@
     HG.state.refMarker = [];
     const ctxState = {
       prev: seed(inI),
+      prevIndex: null,
+      vel: null, step: 0, miss: 0, sizeHint: null,
       markerPrev: conf().markerStart ? { x: conf().markerStart.x, y: conf().markerStart.y } : null
     };
+    /* 2コマ指定があれば、初速と探索窓の基準をそこから作る。
+       無ければ vel が null のまま＝窓なしの従来どおりの探索になる。 */
+    const tf = conf().twoFrame;
+    if (tf) {
+      ctxState.prev = { x: tf.at.x, y: tf.at.y };
+      ctxState.prevIndex = tf.index;
+      ctxState.vel = { x: tf.vel.x, y: tf.vel.y };
+      ctxState.step = tf.step;
+      ctxState.sizeHint = tf.sizeHint;
+    }
     const markerBase = ctxState.markerPrev ? { x: ctxState.markerPrev.x, y: ctxState.markerPrev.y } : null;
 
     const report = {
       ran: true, total: indices.length, tracked: 0, lost: [],
       maxElongation: 1, elongated: 0, noBlob: 0, maxMaskRatio: 0,
-      markerDrift: 0, markerUsed: !!markerBase, markerLost: 0
+      markerDrift: 0, markerUsed: !!markerBase, markerLost: 0,
+      twoFrame: !!tf                         // 2コマ指定で走ったか（助言の分岐に使う）
     };
 
     const rest = await playbackPass(indices, ctxState, report, onProgress || (() => {}));
@@ -331,9 +506,15 @@
       HG.state.tracking.target = c;
       // タップした位置＝そのとき運動体があった場所。追跡の出発点として覚えておく
       HG.state.tracking.seed = { x: ox, y: oy };
+      /* 色を1点で選び直したら、前の2コマ指定の初速は捨てる。
+         別の物体を選んだのに古い予測で探すと、必ず見失う。 */
+      clearTwoFrames();
     }
     return c;
   }
 
-  HG.tracker = { trackAll, clearAuto, pickColorAt, sampleColorAt, sampleRadius, prepare };
+  HG.tracker = {
+    trackAll, clearAuto, pickColorAt, sampleColorAt, sampleRadius, prepare,
+    setTwoFrames, clearTwoFrames, measureAreaAt
+  };
 })(window.HG = window.HG || {});

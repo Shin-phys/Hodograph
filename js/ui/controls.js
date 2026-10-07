@@ -16,13 +16,17 @@
     $('#next10').onclick = () => HG.frames.showFrame(HG.ui.current + 10);
 
     /* --- トリム --- */
+    /* この3つを押すことが「区間を自分で決めた」の記録になる（ステップ1の ✓）。
+       全体に戻すのも、見て決めた結果なので ✓ を付ける。 */
     $('#setIn').onclick = () => {
       const out = (HG.state.trim.outIndex === null ? HG.state.frames.length - 1 : HG.state.trim.outIndex);
       HG.state.trim.inIndex = Math.min(HG.ui.current, out);
+      HG.state.trim.userSet = true;
       HG.bus.emit('trim:changed');
     };
     $('#setOut').onclick = () => {
       HG.state.trim.outIndex = Math.max(HG.ui.current, HG.state.trim.inIndex);
+      HG.state.trim.userSet = true;
       HG.bus.emit('trim:changed');
       /* 区間が決まったら t=0 へ戻す。次は「追う色を指定」で、そのとき見たい
          コマは終点ではなく t=0（物体が写り始めるコマ）だから。 */
@@ -31,6 +35,7 @@
     $('#resetTrim').onclick = () => {
       HG.state.trim.inIndex = 0;
       HG.state.trim.outIndex = HG.state.frames.length - 1;
+      HG.state.trim.userSet = true;
       HG.bus.emit('trim:changed');
     };
 

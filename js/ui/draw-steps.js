@@ -937,8 +937,8 @@
     const dm = $('#drawMode'); if (dm) dm.value = 'hand';
     S.auto = false;
     updateUI();
-    const card = $('#drawCard');
-    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    /* 貼り付いたキャンバスの下に潜らせない。飛び先は必ず HG.steps.goTo を通す */
+    if (HG.steps) HG.steps.goTo('#drawCard');
   }
 
   /* ---------- 描画 ---------- */

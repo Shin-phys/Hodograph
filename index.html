@@ -130,6 +130,7 @@
   <div class="col-side">
   <div class="card" id="stepNavCard">
     <div class="stepnav" id="stepNav"></div>
+    <div id="stepNow" class="hide"></div>
   </div>
 
   <div class="card card-tool">
@@ -203,6 +204,16 @@
       <button id="trackNg" class="ghost">いいえ</button>
     </div>
     <div class="sub spaced hide" id="trackAdvice"></div>
+    <!-- 2コマ指定。うまくいく素材では手順を増やさず、困った人だけが
+         追加の1手を払う形にするため、ここ（「いいえ」のあと）に置く -->
+    <div class="row tight spaced hide" id="twoRow">
+      <button id="twoStart" class="grow">2コマで指定して精度を上げる</button>
+    </div>
+    <div class="sub spaced hide" id="twoInfo"></div>
+    <div class="row tight spaced hide" id="twoRunRow">
+      <button id="twoRun" class="primary grow">この設定で追跡する</button>
+      <button id="twoClear" class="ghost">やめる</button>
+    </div>
     <button id="gotoLost" class="ghost hide spaced">見失ったコマへ</button>
     <div class="slider spaced">
       <label>色相の幅 <span class="mono" id="hueTolVal">25°</span></label>

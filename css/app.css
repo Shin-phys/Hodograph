@@ -61,6 +61,14 @@ ul.ideas li{margin:2px 0; break-inside:avoid;}
 .stepnav .step.now{background:var(--accent); color:#fff; font-weight:700;}
 .stepnav .step.ok{background:#e6f4ec; color:var(--ok); border-color:#bde0cd;}
 .stepnav .step.ok b::after{content:'✓'; margin-left:2px;}
+/* いまやること。番号の色だけでは最初の1手へ向かう動線にならないので、
+   1行だけ押せる形で出す。全部済んだら消える（steps.js 側） */
+#stepNow{margin-top:8px;}
+.stepnow-btn{display:block; width:100%; text-align:left; min-height:40px; padding:0 12px;
+             font-size:13px; border-radius:10px; border:1px dashed var(--line);
+             background:#f6f9fe; color:var(--sub);}
+.stepnow-btn b{color:var(--ink);}
+.stepnow-btn:active{background:#eaf1fb;}
 
 /* 畳めるカード（手で打つ／教師用のモード） */
 details.card > summary{font-size:14px; font-weight:700; cursor:pointer; list-style:none;}
