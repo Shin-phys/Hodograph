@@ -17,9 +17,28 @@
     tl.addEventListener('pointercancel', () => { dragging = false; });
   }
 
+  /**
+   * 棒に表示する範囲。
+   *
+   * ★ 全コマを端から端まで描かないこと。★
+   * 338 コマの動画から 31 コマを切り出すと、区間は棒の幅の 9% に潰れて
+   * 1ピクセル1コマ以下になる。t=0 を1コマ単位で決める作業には使えない
+   * （実機のスクリーンショットで判明。生徒は結局 +10 ボタンを使っていた）。
+   * 区間が決まったら、その前後に余裕を付けた窓だけを引き伸ばして描く。
+   * 余裕があるので、決めたあとに端を少し伸ばす調整もできる。
+   */
+  function viewRange() {
+    const fr = HG.state.frames, last = Math.max(0, fr.length - 1);
+    const t = HG.state.trim;
+    if (!t.userSet) return { lo: 0, hi: last };
+    const out = (t.outIndex === null ? last : t.outIndex);
+    const m = Math.max(5, Math.round((out - t.inIndex) * 0.5));
+    return { lo: Math.max(0, t.inIndex - m), hi: Math.min(last, out + m) };
+  }
+
   function seek(ev) {
     const r = tl.getBoundingClientRect();
-    const g = HG.frames.range();
+    const g = viewRange();
     const p = (ev.clientX - r.left) / r.width;
     HG.frames.showFrame(Math.round(g.lo + Math.max(0, Math.min(1, p)) * (g.hi - g.lo)));
   }
@@ -38,7 +57,7 @@
     const N = HG.state.frames.length - 1 || 1;
     /* 「イン〜アウトだけを表示する」なら、タイムラインもその区間だけを引き伸ばす。
        端のコマを合わせ込みたいとき（単振り子など）に効く。 */
-    const g = HG.frames.range();
+    const g = viewRange();
     const span = Math.max(1, g.hi - g.lo);
     const px = i => ((i - g.lo) / span) * (W - 4 * d) + 2 * d;
 

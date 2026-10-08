@@ -39,26 +39,26 @@
       HG.bus.emit('trim:changed');
     };
 
-    /* --- 表示範囲（軌道に合わせる） --- */
-    $('#fitTrack').onclick = fitToTrack;
-    $('#fitAll').onclick = () => { HG.coords.setCrop(null); HG.refresh(); updateFitLabel(); };
+    /* --- 表示範囲。1つのボタンで交互に切り替える ---
+       2つ並べると、すぐ下のトリムの「全区間に戻す」と「全体」が同じ言葉で
+       2つ並び、意味が違うのに見分けがつかない（実機で並んでいた）。 */
+    $('#fitToggle').onclick = () => {
+      if (HG.view.crop) { HG.coords.setCrop(null); HG.refresh(); }
+      else fitToTrack();
+      updateFitLabel();
+    };
 
-    /* --- イン点・アウト点へ戻る／区間だけを表示する --- */
+    /* --- t=0・終点へ戻る --- */
     $('#gotoIn').onclick = () => HG.frames.showFrame(HG.state.trim.inIndex);
     $('#gotoOut').onclick = () => HG.frames.showFrame(
       HG.state.trim.outIndex === null ? HG.state.frames.length - 1 : HG.state.trim.outIndex);
-    $('#limitTrim').onchange = e => {
-      HG.ui.limitToTrim = e.target.checked;
-      /* 区間の外にいたら、まずイン点へ寄せる */
-      const g = HG.frames.range();
-      if (HG.ui.current < g.lo || HG.ui.current > g.hi) HG.frames.showFrame(g.lo);
-      else HG.refresh();
-    };
 
     /* --- 打点 --- */
     $('#halveStep').onclick = startFill;
     $('#cancelFill').onclick = cancelFill;
     $('#delCur').onclick = () => HG.points.removeCurrent();
+    HG.bus.on('points:changed', updateFitLabel);
+    HG.bus.on('view:changed', updateFitLabel);
     $('#undo').onclick = () => {
       const i = HG.points.undo();
       if (i !== null) HG.frames.showFrame(i);
@@ -122,23 +122,25 @@
     HG.dom.text('#fillInfo', '間を埋めるのをやめました。');
   }
 
-  /** タップ＝打点。打ったら自動で次のコマへ（等間隔を保つための送り） */
+  /**
+   * タップ＝打点（手直し用）。
+   *
+   * ★ 等間隔は、もうここでは守らない。★
+   * 以前は「打点したら N コマ進む」というチェックボックスが等間隔を支えていて、
+   * 生徒が切ると Δt が不揃いになった。**不変条件をチェックボックスに預けるのは弱い。**
+   * いまは案内付き打点（track-controls の B）が、使うコマそのものを順に
+   * 連れて行く。打てるコマが選ばれたコマだけになるので、等間隔は設計で決まる。
+   * ここに残っているのは、打ち終わったあとの手直しと「間を埋める」だけ。
+   */
   function usePointHandler() {
     HG.pointer.setHandler(p => {
       const at = HG.ui.current;
       HG.points.put(p.ox, p.oy);
-
       /* 「間を埋める」の最中は、その行列を進める */
       if (fillQueue.length && fillQueue[0] === at) {
         fillQueue.shift();
         nextInFill();
-        return;
       }
-      if (!$('#autoAdv').checked) return;
-      const step = Math.max(1, parseInt($('#advStep').value, 10) || 1);
-      const out = (HG.state.trim.outIndex === null ? HG.state.frames.length - 1 : HG.state.trim.outIndex);
-      const nx = Math.min(at + step, out);
-      if (nx !== at) HG.frames.showFrame(nx);
     });
   }
 
@@ -183,14 +185,18 @@
     updateFitLabel();
   }
 
+  /**
+   * 表示切り替えボタンの文字と出し入れ。
+   * 倍率などの数字はここに出さない（生徒は「倍率 0.46」で何もできない）。
+   * 診断カードへ回してある。
+   */
   function updateFitLabel() {
-    const a = HG.coords.area();
-    const full = !HG.view.crop;
-    const cv = HG.stage.canvas();
-    const px = cv ? (cv.width / HG.view.dpr) / a.w : 0;
-    HG.dom.text('#fitLabel', full
-      ? '全体を表示中'
-      : '軌道に合わせて表示中（' + Math.round(a.w) + '×' + Math.round(a.h) + ' を拡大／倍率 ' + px.toFixed(2) + '）');
+    const el = $('#fitToggle');
+    if (!el) return;
+    /* 点が2つ無いと押しても怒られるだけなので、そのあいだは出さない。
+       ついでに、トリム中にうっかりクロップできなくなる（トリムは全画面で判断する） */
+    el.classList.toggle('hide', HG.points.listInTrim().length < 2);
+    HG.dom.text('#fitToggle', HG.view.crop ? '全体に戻す' : '軌道に寄せる');
   }
 
   function updateLabels() {
@@ -200,12 +206,13 @@
     const inI = HG.state.trim.inIndex;
     const outI = (HG.state.trim.outIndex === null ? fr.length - 1 : HG.state.trim.outIndex);
 
-    HG.dom.text('#frameLabel', 'コマ ' + HG.ui.current + ' / ' + (fr.length - 1));
-    HG.dom.text('#timeLabel', 't = ' + (f ? f.t.toFixed(3) : '0.000') + ' s');
+    /* コマ番号は画面に重ねる。独立した行にすると貼り付くブロックが厚くなる */
+    HG.dom.text('#frameTag',
+      'コマ ' + HG.ui.current + ' / ' + (fr.length - 1) +
+      '　t = ' + (f ? f.t.toFixed(3) : '0.000') + ' s');
     HG.dom.text('#trimLabel',
-      't=0 はコマ ' + inI + '（' + fr[inI].t.toFixed(3) + ' s） 〜 終点はコマ ' + outI +
-      '（' + fr[outI].t.toFixed(3) + ' s）／' + (outI - inI + 1) + ' コマ' +
-      (HG.ui.limitToTrim ? '（この区間だけを表示中）' : ''));
+      'コマ ' + inI + ' 〜 ' + outI + '（' + (outI - inI + 1) + ' コマ／' +
+      (fr[outI].t - fr[inI].t).toFixed(3) + ' s）');
 
     const inTrim = HG.points.listInTrim();
     const man = inTrim.filter(p => p.manual).length;

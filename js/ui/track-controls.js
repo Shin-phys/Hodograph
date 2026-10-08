@@ -194,6 +194,125 @@
     ctx.restore();
   }
 
+  /* ---------- B：案内付き打点（手で打つ） ----------
+     ★ 手で打つは「自動追跡の保険」ではない。★
+     シールを貼れない対象（落ちる紙、水の流れ、人の動き）では、7回タップの
+     ほうが追跡の設定より速い。Aと対等に並べてある。
+
+     ★ 打つコマは、ステップ4が選ぶコマそのものにすること。★
+     以前は「打点したら N コマ進む」という別の数で送っていたので、2コマおきに
+     打った生徒の点が、ステップ4で4コマおきが選ばれると**半分捨てられていた**。
+     誰も気づかない。同じ数にすれば、打ち終わった時点で「打った点＝使う点」が
+     定義上一致し、ステップ4も同時に済む。
+
+     ★ 素直に「区間÷n」で割らないこと。★
+     31コマ（span 30）で7点なら 30÷7≒4.3→4コマおきとなり、7点で24コマぶん、
+     7コマ余って最後の点が運動の途中で終わる。selection.setCount() は余りを
+     最優先に間隔を選ぶので、同じ条件で5コマおき・7点・余り0になる。 */
+
+  let punch = null;        // { queue:[コマ番号...], i:0 }
+  let punchBusy = false;   // コマの移動中。ここで打たせると1つ前のコマに入る
+
+  function punchCount() { return Math.max(3, Math.min(20, +$('#punchCount').value || 7)); }
+
+  /** スライダーを動かしたとき。打つ前の下見 */
+  function punchPlanned() {
+    if (punch) return;
+    HG.selection.setCount(punchCount());
+    showPlan();
+  }
+
+  function showPlan() {
+    const sel = HG.state.selection;
+    const list = HG.selection.list();
+    const g = HG.state.trim;
+    const out = (g.outIndex === null ? HG.state.frames.length - 1 : g.outIndex);
+    if (!HG.state.frames.length) { HG.dom.html('#punchPlan', ''); return; }
+    if (list.length < 3) {
+      HG.dom.html('#punchPlan', '<span class="warn">区間が短すぎます。トリムを広げてください。</span>');
+      return;
+    }
+    const last = list[list.length - 1].index;
+    HG.dom.html('#punchPlan',
+      sel.interval + ' コマおき／コマ ' + list[0].index + ' → ' + last +
+      (last >= out - Math.max(1, sel.interval * 0.6)
+        ? '<span class="ok">（終点まで届きます）</span>'
+        : '<span class="warn">（終点の手前で終わります）</span>'));
+  }
+
+  function punchBegin() {
+    const list = HG.selection.list();
+    if (list.length < 3) { alert('打つコマが3つ以上必要です。トリムを広げてください。'); return; }
+    /* 自動追跡の結果が残っていると「打った点＝使う点」が崩れる。先に片付ける */
+    if (HG.state.tracking.report) {
+      if (!confirm('自動追跡の結果を消してから手で打ちます。よろしいですか？')) return;
+      HG.tracker.clearAuto();
+      HG.state.tracking.verified = false;
+      HG.dom.hide('#trackAskRow'); HG.dom.hide('#trackAdvice');
+      HG.dom.hide('#twoRow'); HG.dom.hide('#twoRunRow');
+    }
+    punch = { queue: list.map(f => f.index), i: 0 };
+    $('#punchCount').disabled = true;
+    HG.dom.hide('#punchStart');
+    HG.dom.show('#punchStop');
+    HG.dom.show('#punchBack');
+    HG.pointer.setHandler(onPunch);
+    gotoPunch();
+  }
+
+  async function gotoPunch() {
+    if (!punch) return;
+    if (punch.i >= punch.queue.length) { punchDone(); return; }
+    punchBusy = true;
+    await HG.frames.showFrame(punch.queue[punch.i]);
+    punchBusy = false;
+    const n = punch.queue.length;
+    hint('物体をタップしてください（' + (punch.i + 1) + ' / ' + n + ' 点目）');
+    HG.dom.html('#punchInfo',
+      '<b>' + (punch.i + 1) + ' / ' + n + ' 点目</b>（コマ ' + punch.queue[punch.i] + '）' +
+      '<div class="sub">打つと次のコマへ自動で進みます。</div>');
+  }
+
+  function onPunch(p) {
+    if (!punch || punchBusy) return;
+    HG.points.put(p.ox, p.oy);
+    punch.i++;
+    gotoPunch();
+  }
+
+  async function punchBack() {
+    if (!punch) return;
+    if (punch.i > 0) punch.i--;
+    punchBusy = true;
+    await HG.frames.showFrame(punch.queue[punch.i]);
+    punchBusy = false;
+    HG.points.removeCurrent();          // 打ち直しになるよう、その点は消す
+    gotoPunch();
+  }
+
+  function punchDone() {
+    const n = punch ? punch.queue.length : 0;
+    endPunch();
+    HG.dom.html('#punchInfo', '<span class="ok">' + n + ' 点すべて打ちました。</span>' +
+      '<div class="sub">打ったコマがそのまま「使うコマ」です（ステップ4は済んでいます）。</div>');
+    if (HG.steps) { HG.steps.render(); HG.steps.goTo('#strobeCard'); }
+  }
+
+  function endPunch() {
+    punch = null; punchBusy = false;
+    $('#punchCount').disabled = false;
+    HG.dom.show('#punchStart');
+    HG.dom.hide('#punchStop');
+    HG.dom.hide('#punchBack');
+    HG.controls.usePointHandler();
+    hintDefault();
+  }
+
+  function punchCancel() {
+    endPunch();
+    HG.dom.html('#punchInfo', '手で打つのをやめました。打った点は残っています。');
+  }
+
   /* ---------- 2コマ指定（ステップ3の「いいえ」から） ----------
      うまくいく素材では手順を増やさず、困った人だけが追加の1手を払う形。
      1コマ目 → 数コマ送る → 2コマ目、の3手で初速・色・大きさが決まる。 */
@@ -391,6 +510,18 @@
       HG.frames.showFrame(r.lost[lostAt++]);
     };
 
+    /* --- B：案内付き打点 --- */
+    $('#punchCount').oninput = e => {
+      HG.dom.text('#punchCountVal', e.target.value + ' 点');
+      punchPlanned();
+    };
+    $('#punchStart').onclick = punchBegin;
+    $('#punchStop').onclick = punchCancel;
+    $('#punchBack').onclick = punchBack;
+    HG.bus.on('trim:changed', () => { if (!punch) showPlan(); });
+    HG.bus.on('frames:scanned', () => { if (!punch) showPlan(); });
+    HG.bus.on('selection:changed', () => { if (!punch) showPlan(); });
+
     /* --- 手で打つカードを開いたら、そこへ連れて行く ---
        ★ scrollIntoView を直に呼ばないこと。★ 狭い画面では貼り付いた
        キャンバスの下に見出しが潜る。さらに、帯から飛んだときは
@@ -448,5 +579,5 @@
     if (HG.steps) HG.steps.render();
   }
 
-  HG.trackControls = { attach, hintDefault, paintAim };
+  HG.trackControls = { attach, hintDefault, paintAim, punching: () => !!punch };
 })(window.HG = window.HG || {});

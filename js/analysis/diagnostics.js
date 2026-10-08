@@ -100,6 +100,9 @@
       row('Δt 最小／最大', (s.min * 1000).toFixed(2) + ' ／ ' + (s.max * 1000).toFixed(2) + ' ms') +
       row('不揃い率', (s.jitter * 100).toFixed(1) + ' %') +
       row('時刻の取得方法', HG.ui.timebase === 'rvfc' ? 'requestVideoFrameCallback（実測）' : 'currentTime 送り（推定）') +
+      /* 表示倍率。生徒の導線には置かない（「倍率 0.46」で打つ手が無い）が、
+         矢印が小さすぎる原因を教師が調べるときに要る */
+      row('表示', fitInfo()) +
       (r ? row('自動追跡', r.tracked + ' / ' + r.total + ' コマ（見失い ' + r.lost.length + '）') +
            row('ブロブの楕円率', '最大 ' + r.maxElongation.toFixed(2)) +
            row('カメラぶれ', r.markerUsed ? '最大 ' + r.markerDrift.toFixed(1) + ' px（補正' +
@@ -117,6 +120,14 @@
 
   function row(k, v) {
     return '<tr><td>' + k + '</td><td class="mono">' + v + '</td></tr>';
+  }
+
+  function fitInfo() {
+    if (!HG.view.crop) return '全体';
+    const a = HG.coords.area();
+    const cv = HG.stage.canvas();
+    const px = cv ? (cv.width / HG.view.dpr) / a.w : 0;
+    return Math.round(a.w) + '×' + Math.round(a.h) + ' を拡大（倍率 ' + px.toFixed(2) + '）';
   }
 
   HG.diagnostics = { dtStats, render };

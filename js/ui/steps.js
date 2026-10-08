@@ -21,7 +21,7 @@
   const STEPS = [
     { n: 1, label: 'トリム',   lead: '解析に使う区間を決める',   card: '#trimCard'   },
     { n: 2, label: '追う色',   lead: '追う色を決める',           card: '#markCard'   },
-    { n: 3, label: '自動追跡', lead: '自動で追跡する',           card: '#trackCard'  },
+    { n: 3, label: '座標',     lead: '座標を取る',               card: '#trackCard'  },
     { n: 4, label: '使うコマ', lead: '使うコマを決める',         card: '#selectCard' },
     { n: 5, label: 'ストロボ', lead: 'ストロボ画像をつくる',     card: '#strobeCard' },
     { n: 6, label: '作図',     lead: '作図する',                 card: '#drawCard'   }
@@ -59,7 +59,13 @@
          手で打っただけ（走らせていない）なら、点が揃っていれば済んだ扱い。 */
       return st.tracking.report ? !!st.tracking.verified : true;
     }
-    if (n === 4) return HG.selection.isActive() && HG.selection.list().length >= 3;
+    if (n === 4) {
+      /* 「コマが選ばれている」だけでは ✓ にしない。区間を決めた時点で
+         選択は自動で決まるので、点が1つも無いのに4が ✓ になる。
+         選ばれたコマに実際に座標が入っているかを見る。 */
+      if (!HG.selection.isActive()) return false;
+      return HG.selection.list().filter(f => f.found).length >= 3;
+    }
     if (n === 5) return HG.strobe.cache.ready;
     if (n === 6) return HG.draw.state.step >= 5;
     return false;
@@ -77,26 +83,21 @@
     if (!el) return;
     const ls = list();
     const cur = current();
+    /* ★ 帯は1行に収めること。★
+       言葉付きの札を6つ並べると、狭い画面で2〜3行に折り返して 138px になり、
+       貼り付くブロックが画面の半分を超える（実測）。帯のために画面を失うなら
+       本末転倒なので、**済んだ段と先の段は番号だけ**にして、
+       いまやる段だけが言葉を持つ。 */
+    const now = ls.filter(s => s.n === cur && !done(s.n))[0];
     HG.dom.html('#stepNav', ls.map(s => {
       /* 済んだものは必ず ✓。全部済んだときに最後が「now」で光り続けると、
          まだ何か残っているように見える。 */
-      const cls = done(s.n) ? 'step ok' : s.n === cur ? 'step now' : 'step';
-      return '<button class="' + cls + '" data-card="' + s.card + '">' +
-             '<b>' + s.n + '</b> ' + s.label + '</button>';
+      const isNow = now && s.n === now.n;
+      const cls = done(s.n) ? 'step ok' : isNow ? 'step now' : 'step';
+      return '<button class="' + cls + '" data-card="' + s.card + '" title="' + s.lead + '">' +
+             '<b>' + s.n + '</b>' + (isNow ? '<span class="step-lead">' + s.label + '</span>' : '') +
+             '</button>';
     }).join(''));
-
-    /* いまやること。番号を並べるだけでは「どれが次か」は色でしか分からず、
-       最初の1手（トリック）へ向かう動線が無かった。1行だけ、押せる形で出す。
-       全部済んだら消す（残っていると、まだ何かあるように見える）。 */
-    const now = ls.filter(s => s.n === cur && !done(s.n))[0];
-    const line = $('#stepNow');
-    if (!line) return;
-    line.classList.toggle('hide', !now);
-    if (now) {
-      HG.dom.html('#stepNow',
-        '<button class="stepnow-btn" data-card="' + now.card + '">つぎは ' +
-        '<b>' + now.n + '. ' + now.lead + '</b> →</button>');
-    }
   }
 
   /**
@@ -127,7 +128,6 @@
       if (b) goTo(b.dataset.card);
     };
     $('#stepNav').onclick = jump;
-    if ($('#stepNow')) $('#stepNow').onclick = jump;
     ['trim:changed', 'points:changed', 'selection:changed', 'selection:committed',
      'strobe:made', 'frames:scanned'].forEach(ev => HG.bus.on(ev, render));
     render();

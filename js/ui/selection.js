@@ -262,6 +262,10 @@
     off.min = 0; off.max = Math.max(0, s.interval - 1); off.value = s.offset;
     off.disabled = (s.interval <= 1);
     $('#selCount').value = s.count;
+    /* 「打つ点の数」とステップ4の「使う点の数」は同じ数。別々に持たせると、
+       2コマおきに打った点が4コマおきの選択で半分捨てられる（以前そうだった） */
+    { const pc = $('#punchCount'); if (pc) pc.value = s.count; }
+    HG.dom.text('#punchCountVal', s.count + ' 点');
   }
 
   function refreshLabels() {
@@ -473,7 +477,14 @@
     $('#showPreview').onchange = e => { preview = e.target.checked; HG.refresh(); };
 
     HG.bus.on('points:changed', showSuggestion);
-    HG.bus.on('trim:changed', () => { if (active) apply(); else showSuggestion(); });
+    /* ★ 区間が変われば、使うコマは必ず取り直すこと。★
+       以前は「点が4つ以上あるとき」しか取り直していなかった。点を打つ前に
+       区間を決める導線（手で打つ）では、使うコマが区間の外に残ったままになり、
+       案内付き打点が区間外のコマへ連れて行っていた。 */
+    HG.bus.on('trim:changed', () => {
+      if (!userTouched) setCount(sel().count);
+      apply();
+    });
   }
 
   HG.selection = { attach, list, isActive, suggest, current, jitterStats, revisits, turningPoint,
